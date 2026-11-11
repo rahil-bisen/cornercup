@@ -1,0 +1,12 @@
+{
+  "siteId": "6f1c2a48-9b3d-4e57-8a10-2c5d7b9e4f63",
+  "name": "Corner Cup Café — Razorpay",
+  "production": "https://site-fa58771d25fb4936bbad5cffd6ff3973.freebuff.page",
+  "preview": "https://site-f4adb11790b449ea9193aefa06b95d50.freebuff.page",
+  "note": "Second deployment: Razorpay-only build. The first site (4a2196dc-7182-45ab-bd5e-0582d20e4cb0) is stuck behind an unresolved deploy operation.",
+  "previousSite": {
+    "siteId": "4a2196dc-7182-45ab-bd5e-0582d20e4cb0",
+    "production": "https://site-8cde8b8d75c74317a77658adb95874fa.freebuff.page",
+    "preview": "https://site-03a4b1b4592a4b038540729b9d149516.freebuff.page"
+  }
+}

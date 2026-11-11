@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "corner-cup",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-11-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "vars": {
+    "CAFE_NAME": "Corner Cup Café",
+    // "tables" (guests scan a table code) or "counter" (pickup numbers, no tables).
+    "SERVICE_MODE": "counter",
+    "CAFE_TZ_OFFSET_MIN": "330"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

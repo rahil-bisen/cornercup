@@ -1,0 +1,25 @@
+{
+  "name": "corner-cup-qr-ordering",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && wrangler dev --ip 0.0.0.0 --port 3000",
+    "build": "vite build",
+    "start": "wrangler dev --ip 0.0.0.0 --port 3000",
+    "deploy": "npm run build && wrangler deploy",
+    "test": "node --test tests/*.test.mjs"
+
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.3.5",
+    "wrangler": "^4.20.0"
+  }
+}

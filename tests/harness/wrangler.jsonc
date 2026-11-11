@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "corner-cup-batch-harness",
+  "main": "worker.mjs",
+  "compatibility_date": "2025-11-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

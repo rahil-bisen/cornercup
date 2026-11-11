@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.wrangler/
+.tools/
+sites-build/
+.admin-secret.txt
+.operator-password.txt
+.dev.vars
+.env
+.DS_Store
+*.log
+.razorpay-key-id.txt
+.razorpay-key-secret.txt
+
+# generated audit exports and local databases
+audit-package/
+corner-cup-*.zip
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

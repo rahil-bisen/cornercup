@@ -1,0 +1,414 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { api, cafePath, cafeSlug } from "../lib/api.js";
+import { cafeName, useSiteConfig } from "../lib/config.js";
+import { money } from "../lib/money.js";
+import CartSheet from "../components/CartSheet.jsx";
+import {
+  abandonPendingCheckout,
+  checkoutAction,
+  checkoutStorageKey,
+  clearCheckout,
+  openCheckout,
+  readCheckout,
+} from "../lib/checkout.js";
+
+export default function Menu() {
+  const { tableId: routeTable } = useParams();
+  const [search] = useSearchParams();
+  const navigate = useNavigate();
+  const queryTable = search.get("table");
+  // The QR code carries the table in the path; ?table=N is accepted too. Either way it is kept for
+  // the session, so a refresh or a detour to a policy page doesn't lose the table before checkout.
+  const [tableId, setTableId] = useState(
+    () => routeTable || queryTable || (typeof window === "undefined" ? "" : sessionStorage.getItem("cafe_table")) || ""
+  );
+  const [tables, setTables] = useState([]);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  // The basket key follows the table, or "takeaway" for a counter-service café, so the two flows
+  // can share a browser without mixing their carts.
+  const cartKey = `cart:${cafeSlug() || "cafe"}:${tableId ? `table-${tableId}` : "takeaway"}`;
+  const [cart, setCart] = useState(() => readCart(cartKey));
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [placing, setPlacing] = useState(false);
+  const [placeError, setPlaceError] = useState("");
+  const [resolvedOrder, setResolvedOrder] = useState(null);
+  const config = useSiteConfig();
+  const cafe = cafeName(config);
+  // Set by the café (SERVICE_MODE=counter): no table to scan, the guest gets a pickup number instead.
+  const counterService = Boolean(config && config.service && config.service.mode === "counter");
+
+  useEffect(() => {
+    const fromLink = routeTable || queryTable;
+    if (!fromLink) return;
+    setTableId(String(fromLink));
+    sessionStorage.setItem("cafe_table", String(fromLink));
+  }, [routeTable, queryTable]);
+
+  // Only needed when the guest arrived without a table, so the picker has something to show.
+  useEffect(() => {
+    if (tableId || counterService) return undefined;
+    let alive = true;
+    api("/api/tables")
+      .then((payload) => {
+        if (alive) setTables(payload.tables || []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [tableId, counterService]);
+
+  const pickTable = (id) => {
+    sessionStorage.setItem("cafe_table", String(id));
+    setTableId(String(id));
+    navigate(cafePath(`/t/${id}`));
+  };
+
+  useEffect(() => {
+    if (!tableId && !counterService) return undefined;
+    let alive = true;
+    setError("");
+    api(tableId ? `/api/menu?table=${encodeURIComponent(tableId)}` : "/api/menu")
+      .then((payload) => {
+        if (alive) setData(payload);
+      })
+      .catch((err) => {
+        if (alive) setError(err.message);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tableId, counterService]);
+
+  useEffect(() => {
+    localStorage.setItem(cartKey, JSON.stringify(cart));
+  }, [cart, cartKey]);
+
+  useEffect(() => {
+    document.body.classList.toggle("sheet-open", sheetOpen);
+    return () => document.body.classList.remove("sheet-open");
+  }, [sheetOpen]);
+
+  const itemsById = useMemo(() => {
+    const map = new Map();
+    (data ? data.categories : []).forEach((category) => {
+      category.items.forEach((item) => map.set(item.id, { ...item, category: category.name }));
+    });
+    return map;
+  }, [data]);
+
+  const lines = useMemo(
+    () =>
+      Object.entries(cart)
+        .filter(([, qty]) => qty > 0)
+        .map(([id, qty]) => ({ item: itemsById.get(Number(id)), qty }))
+        .filter((line) => line.item && line.item.available),
+    [cart, itemsById]
+  );
+
+  const itemCount = lines.reduce((sum, line) => sum + line.qty, 0);
+  const total = lines.reduce((sum, line) => sum + line.item.priceCents * line.qty, 0);
+
+  const setQty = (itemId, qty) => {
+    setCart((current) => {
+      const next = { ...current };
+      if (qty <= 0) delete next[itemId];
+      else next[itemId] = Math.min(20, qty);
+      return next;
+    });
+  };
+
+  // Scoped like the cart, so two tables sharing one browser never share a checkout key.
+  const checkoutKey = checkoutStorageKey(cafeSlug(), tableId);
+
+  const buildCheckoutPayload = () => ({
+    ...(tableId ? { tableId: Number(tableId) } : {}),
+    note,
+    paymentMethod: "razorpay",
+    items: lines.map((line) => ({ itemId: line.item.id, qty: line.qty })).sort((a, b) => a.itemId - b.itemId),
+  });
+
+  // A reload rebuilds the pending body from the stored note, so an untouched cart is the same checkout.
+  useEffect(() => {
+    const pending = readCheckout(checkoutKey);
+    if (!pending) return;
+    try {
+      const parsed = JSON.parse(pending.body);
+      if (typeof parsed.note === "string") setNote(parsed.note);
+    } catch {
+      /* a corrupt entry is replaced only after a conclusive reply */
+    }
+  }, [checkoutKey]);
+
+  const placeOrder = async () => {
+    setPlaceError("");
+    if (!tableId && !counterService) {
+      setPlaceError("Pick your table first — the kitchen needs to know where to bring it.");
+      return;
+    }
+    setPlacing(true);
+
+    const body = JSON.stringify(buildCheckoutPayload());
+    const pending = readCheckout(checkoutKey);
+
+    try {
+      // The cart changed while a checkout was unresolved. Never re-POST the old body: if that request
+      // never reached the server, the POST would place an order the guest no longer wants. Settle the
+      // old key first, and trust only a terminal answer.
+      if (checkoutAction(pending, body) === "verify") {
+        const settled = await abandonPendingCheckout(checkoutKey, api);
+
+        if (settled.state === "committed") {
+          setResolvedOrder(settled.order || null);
+          return;
+        }
+        if (settled.state === "unverified") {
+          setPlaceError("We couldn't verify your earlier checkout. Please start again, or ask our staff to look it up.");
+          return;
+        }
+        if (settled.state !== "abandoned") {
+          setPlaceError("We couldn't confirm your previous order yet. Please try again in a moment.");
+          return;
+        }
+      }
+
+      const attempt = openCheckout(checkoutKey, body);
+      const payload = await api("/api/orders", {
+        method: "POST",
+        headers: { "Idempotency-Key": attempt.key },
+        body: attempt.body,
+      });
+
+      clearCheckout(checkoutKey);
+      localStorage.removeItem(cartKey);
+      setCart({});
+      setNote("");
+      setSheetOpen(false);
+      navigate(cafePath(tableId ? `/t/${tableId}/order/${payload.order.id}` : `/order/${payload.order.id}`));
+    } catch (err) {
+      // A key the server has tied to another payload can never be ours again.
+      if (err && (err.code === "idempotency_key_reused" || err.code === "checkout_abandoned")) {
+        clearCheckout(checkoutKey);
+      }
+      setPlaceError(err.message);
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  if (!tableId && !counterService) {
+    return (
+      <main className="page-narrow">
+        <div className="state-card">
+          <span className="state-emoji" aria-hidden="true">
+            🪑
+          </span>
+          <h1>Which table are you at?</h1>
+          <p className="muted">
+            Scan the QR code on your table, or pick your table below to start an order.
+          </p>
+          <div className="table-grid">
+            {tables.map((table) => (
+              <button key={table.id} type="button" className="table-chip" onClick={() => pickTable(table.id)}>
+                <span>{table.label}</span>
+                <small>{table.seats} seats</small>
+              </button>
+            ))}
+            {tables.length === 0 && <p className="muted small">Loading tables…</p>}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="page-narrow">
+        <div className="state-card">
+          <span className="state-emoji" aria-hidden="true">
+            🫥
+          </span>
+          <h1>Hmm, that link didn't work</h1>
+          <p className="muted">{error}</p>
+          <Link className="btn primary" to={cafePath("")}>
+            Back to the start
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="menu-page">
+      <header className="menu-head">
+        <div>
+          <p className="eyebrow">{cafe}</p>
+          <h1>Menu</h1>
+        </div>
+        <div className="table-badge">
+          <span>{counterService ? "Pickup" : data && data.table ? data.table.label : `Table ${tableId}`}</span>
+          <small>{counterService ? "order · pay · collect" : "scan · order · relax"}</small>
+        </div>
+      </header>
+
+      {!data && <SkeletonMenu />}
+
+      {data && (
+        <>
+          <nav className="category-nav" aria-label="Menu categories">
+            {data.categories.map((category) => (
+              <button
+                key={category.name}
+                type="button"
+                onClick={() =>
+                  document.getElementById(`cat-${slug(category.name)}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
+              >
+                {category.name}
+              </button>
+            ))}
+          </nav>
+
+          <div className="menu-sections">
+            {data.categories.map((category) => (
+              <section key={category.name} id={`cat-${slug(category.name)}`} className="menu-section">
+                <h2>{category.name}</h2>
+                <ul className="menu-list">
+                  {category.items.map((item) => (
+                    <li key={item.id} className={`menu-item${item.available ? "" : " sold-out"}`}>
+                      <span className="menu-emoji" aria-hidden="true">
+                        {item.emoji}
+                      </span>
+                      <div className="menu-text">
+                        <div className="menu-title">
+                          <h3>{item.name}</h3>
+                          <span className="menu-price">{money(item.priceCents)}</span>
+                        </div>
+                        <p className="muted small">{item.description}</p>
+                        {!item.available && <span className="pill sold">Sold out</span>}
+                      </div>
+                      {item.available &&
+                        (cart[item.id] ? (
+                          <div className="stepper">
+                            <button
+                              type="button"
+                              onClick={() => setQty(item.id, (cart[item.id] || 0) - 1)}
+                              aria-label={`Remove one ${item.name}`}
+                            >
+                              −
+                            </button>
+                            <span>{cart[item.id]}</span>
+                            <button
+                              type="button"
+                              onClick={() => setQty(item.id, (cart[item.id] || 0) + 1)}
+                              aria-label={`Add one ${item.name}`}
+                            >
+                              +
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="add-btn"
+                            onClick={() => setQty(item.id, 1)}
+                            aria-label={`Add ${item.name} to your order`}
+                          >
+                            +
+                          </button>
+                        ))}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </>
+      )}
+
+      {itemCount > 0 && (
+        <div className="cart-bar-wrap">
+          <button type="button" className="cart-bar" onClick={() => setSheetOpen(true)}>
+            <span className="cart-count">{itemCount}</span>
+            <span className="cart-label">{itemCount === 1 ? "item" : "items"} in your order</span>
+            <span className="cart-total">{money(total)}</span>
+            <span className="cart-arrow" aria-hidden="true">
+              →
+            </span>
+          </button>
+        </div>
+      )}
+
+      {resolvedOrder && (
+        <div className="state-card" role="status">
+          <p>
+            Your earlier order was already placed — <strong>#{resolvedOrder.id}</strong>
+            {resolvedOrder.queueNo != null ? ` · pickup number ${resolvedOrder.queueNo}` : ""}.
+          </p>
+          <p className="muted small">Your new items are still in the cart below.</p>
+          <button
+            type="button"
+            onClick={() =>
+              navigate(cafePath(tableId ? `/t/${tableId}/order/${resolvedOrder.id}` : `/order/${resolvedOrder.id}`))
+            }
+          >
+            Open order #{resolvedOrder.id}
+          </button>
+        </div>
+      )}
+
+      <CartSheet
+        open={sheetOpen}
+        lines={lines}
+        note={note}
+        onNote={setNote}
+        onQty={setQty}
+        onClose={() => setSheetOpen(false)}
+        onPlace={placeOrder}
+        total={total}
+        placing={placing}
+        error={placeError}
+        tableLabel={counterService ? "Pickup order" : data && data.table ? data.table.label : `Table ${tableId}`}
+      />
+    </main>
+  );
+}
+
+function readCart(cartKey) {
+  try {
+    const raw = localStorage.getItem(cartKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function slug(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function SkeletonMenu() {
+  return (
+    <div className="menu-sections" aria-hidden="true">
+      {[0, 1].map((section) => (
+        <div key={section} className="menu-section">
+          <div className="skeleton-line w-30" />
+          <ul className="menu-list">
+            {[0, 1, 2].map((row) => (
+              <li key={row} className="menu-item">
+                <span className="menu-emoji skeleton" />
+                <div className="menu-text">
+                  <div className="skeleton-line w-60" />
+                  <div className="skeleton-line w-90" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
