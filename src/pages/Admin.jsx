@@ -329,7 +329,7 @@ function OrdersTab({ call, cafe }) {
 
   const columns = [
     { key: "new", title: "New", action: "Preparing", next: "preparing" },
-    { key: "preparing", title: "Preparing", action: "Done", next: "served" },
+    { key: "preparing", title: "Preparing", action: "Ready", next: "ready" },
     { key: "ready", title: "Ready", action: "Done", next: "served" },
   ];
 

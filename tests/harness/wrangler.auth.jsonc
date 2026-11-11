@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "corner-cup-auth-harness",
+  "main": "worker.mjs",
+  "compatibility_date": "2025-11-01",
+  "vars": {
+    "ADMIN_SECRET": "test-admin-secret-for-harness-only",
+    "ADMIN_PIN": "1234"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

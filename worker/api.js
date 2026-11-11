@@ -25,6 +25,17 @@ import {
 
 const STATUSES = ["new", "preparing", "ready", "served", "cancelled"];
 const PAYMENT_STATUSES = ["unpaid", "submitted", "confirmed", "counter", "failed"];
+
+// Legitimate status flow: NEW → PREPARING → READY → SERVED (terminal). Cancellation is always
+// allowed, and re-sending the current status is a harmless no-op. Anything else is a skipped step.
+function canTransitionStatus(from, to) {
+  if (from === to) return true;
+  if (to === "cancelled") return true;
+  if (from === "new" && to === "preparing") return true;
+  if (from === "preparing" && to === "ready") return true;
+  if (from === "ready" && to === "served") return true;
+  return false;
+}
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 // PhonePe Standard Checkout v2. Sandbox is the default so a stray deploy never moves real money.
 const PHONEPE = {
@@ -1573,6 +1584,17 @@ async function adminUpdateOrder(request, env, cafe, id) {
   if (body.status !== undefined) {
     const status = String(body.status);
     if (!STATUSES.includes(status)) return json({ error: "Unknown order status." }, 400);
+
+    // Guard the workflow: a status may only move one step at a time (or be cancelled). Fetching the
+    // current row also gives a clean 404 for a missing order before any UPDATE runs.
+    const current = await env.DB.prepare("SELECT status FROM orders WHERE id = ? AND cafe_id = ?")
+      .bind(id, cafe.id)
+      .first();
+    if (!current) return json({ error: "Order not found." }, 404);
+    if (!canTransitionStatus(String(current.status || ""), status)) {
+      return json({ error: "That status change isn't allowed." }, 409);
+    }
+
     sets.push("status = ?");
     params.push(status);
   }
