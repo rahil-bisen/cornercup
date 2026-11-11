@@ -175,7 +175,8 @@ async function operatorLogin(request, env) {
     return json({ error: "The operator console isn't configured on this deployment." }, 503);
   }
 
-  const expected = env.OPERATOR_PASSWORD;
+  // Trim so a secret pasted with stray whitespace still matches what the user types.
+  const expected = String(env.OPERATOR_PASSWORD || "").trim();
   if (!expected) {
     return json({ error: "The operator password isn't configured for this deployment." }, 503);
   }
@@ -1418,7 +1419,9 @@ async function login(request, env, cafe) {
   }
   // A café with its own password uses it. The first café can still fall back to the deployment's
   // OWNER_PASSWORD, which is what keeps a single-café install working after an upgrade.
-  const legacy = env.OWNER_PASSWORD || env.ADMIN_PIN;
+  // Trim both sides so a secret pasted with stray whitespace still matches what the user types.
+  const legacyRaw = env.OWNER_PASSWORD || env.ADMIN_PIN;
+  const legacy = legacyRaw ? String(legacyRaw).trim() : legacyRaw;
   if (!cafe.pass_hash && !legacy) {
     return json({ error: "This café hasn't set an owner password yet." }, 503);
   }
