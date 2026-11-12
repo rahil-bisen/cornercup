@@ -69,15 +69,57 @@ export default {
     }
 
     if (url.pathname === "/clean") {
+      // A café created through the real API has no id in its response, so allow cleaning by slug.
+      let cafeId = body.cafeId;
+      if ((cafeId === undefined || cafeId === null) && body.slug) {
+        const row = await env.DB.prepare("SELECT id FROM cafes WHERE slug = ?").bind(body.slug).first();
+        cafeId = row ? row.id : null;
+      }
+      if (cafeId === undefined || cafeId === null) return json({ ok: true });
+
       await env.DB.prepare("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE cafe_id = ?)")
-        .bind(body.cafeId)
+        .bind(cafeId)
         .run();
-      await env.DB.prepare("DELETE FROM orders WHERE cafe_id = ?").bind(body.cafeId).run();
-      await env.DB.prepare("DELETE FROM checkout_claims WHERE cafe_id = ?").bind(body.cafeId).run();
-      await env.DB.prepare("DELETE FROM menu_items WHERE cafe_id = ?").bind(body.cafeId).run();
-      await env.DB.prepare("DELETE FROM tables WHERE cafe_id = ?").bind(body.cafeId).run();
-      await env.DB.prepare("DELETE FROM cafes WHERE id = ?").bind(body.cafeId).run();
+      await env.DB.prepare("DELETE FROM orders WHERE cafe_id = ?").bind(cafeId).run();
+      await env.DB.prepare("DELETE FROM checkout_claims WHERE cafe_id = ?").bind(cafeId).run();
+      await env.DB.prepare("DELETE FROM menu_items WHERE cafe_id = ?").bind(cafeId).run();
+      await env.DB.prepare("DELETE FROM tables WHERE cafe_id = ?").bind(cafeId).run();
+      await env.DB.prepare("DELETE FROM password_resets WHERE cafe_id = ?").bind(cafeId).run();
+      await env.DB.prepare("DELETE FROM csrf_tokens").run();
+      await env.DB.prepare("DELETE FROM cafes WHERE id = ?").bind(cafeId).run();
       return json({ ok: true });
+    }
+
+    // Test-only: corrupt the stored version so the fail-closed path can be exercised. SQLite keeps
+    // whatever is written here, including a fraction or text, which is the point.
+    if (url.pathname === "/version") {
+      await env.DB.prepare("UPDATE cafes SET auth_version = ? WHERE id = ?")
+        .bind(body.value, body.cafeId)
+        .run();
+      const row = await env.DB.prepare("SELECT auth_version FROM cafes WHERE id = ?").bind(body.cafeId).first();
+      return json({ authVersion: row ? row.auth_version : null });
+    }
+
+    // Test-only view of what a password reset wrote. The hash is never returned, so a test can check
+    // that the password changed without ever holding the stored credential.
+    if (url.pathname === "/audit") {
+      // A cafe id shows only that cafe's rows; no id shows the rejections that had no cafe to name.
+      const resets = await env.DB.prepare(
+        "SELECT cafe_id, operator_identity, action, outcome, timestamp FROM password_resets " +
+          (body.cafeId == null ? "WHERE cafe_id IS NULL " : "WHERE cafe_id = ? ") +
+          "ORDER BY id ASC"
+      )
+        .bind(...(body.cafeId == null ? [] : [body.cafeId]))
+        .all();
+      const cafe = body.cafeId == null
+        ? null
+        : await env.DB.prepare(
+            "SELECT id, slug, auth_version, password_changed_at, (pass_hash IS NOT NULL) AS has_password FROM cafes WHERE id = ?"
+          )
+            .bind(body.cafeId)
+            .first();
+      const tokens = await env.DB.prepare("SELECT COUNT(*) AS value FROM csrf_tokens").first();
+      return json({ resets: resets.results || [], cafe, csrfTokens: Number(tokens && tokens.value) || 0 });
     }
 
     if (url.pathname === "/claim") {

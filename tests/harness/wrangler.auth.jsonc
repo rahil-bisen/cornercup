@@ -5,7 +5,8 @@
   "compatibility_date": "2025-11-01",
   "vars": {
     "ADMIN_SECRET": "test-admin-secret-for-harness-only",
-    "ADMIN_PIN": "1234"
+    "ADMIN_PIN": "1234",
+    "OPERATOR_PASSWORD": "operator-test-password"
   },
   "d1_databases": [
     {

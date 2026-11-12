@@ -1,4 +1,4 @@
-const SCHEMA = [
+export const SCHEMA = [
   // One row per café on this deployment. Everything a tenant can change about itself lives here,
   // so several clients can share one Worker and one database without sharing any of their data.
   `CREATE TABLE IF NOT EXISTS cafes (
@@ -78,7 +78,7 @@ const SCHEMA = [
 ];
 
 // Runs after the schema so databases created for the single-café build pick up the tenant columns.
-const MIGRATIONS = [
+export const MIGRATIONS = [
   "ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'counter'",
   "ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unpaid'",
   "ALTER TABLE orders ADD COLUMN paid_at TEXT",
@@ -97,10 +97,17 @@ const MIGRATIONS = [
   // Table numbers restart at 1 per café; the internal `id` stays the join key for orders.
   "ALTER TABLE tables ADD COLUMN number INTEGER",
   "UPDATE tables SET number = id WHERE number IS NULL",
+  // The reset-password columns ship only as migrations, so a fresh database and a legacy one
+  // arrive at the same shape through the same statements. Re-running them is safe: a column that
+  // already exists is caught below, and every CREATE is IF NOT EXISTS.
+  "ALTER TABLE cafes ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE cafes ADD COLUMN password_changed_at INTEGER NOT NULL DEFAULT 0",
+  "CREATE TABLE IF NOT EXISTS password_resets (id INTEGER PRIMARY KEY AUTOINCREMENT, cafe_id INTEGER, operator_identity TEXT NOT NULL, action TEXT NOT NULL, outcome TEXT NOT NULL, timestamp INTEGER NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS csrf_tokens (token_hash TEXT PRIMARY KEY, operator_key_hash TEXT NOT NULL, expires INTEGER NOT NULL, created INTEGER NOT NULL)",
 ];
 
 // Columns added by MIGRATIONS cannot be indexed before they exist, so these run afterwards.
-const POST_MIGRATIONS = [
+export const POST_MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS idx_menu_cafe ON menu_items (cafe_id, sort)",
   "CREATE INDEX IF NOT EXISTS idx_orders_cafe ON orders (cafe_id, created_at)",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_tables_cafe_number ON tables (cafe_id, number)",
@@ -369,14 +376,41 @@ async function readCheckoutConstraints(env) {
   }
 }
 
+// The target of an `ALTER TABLE ... ADD COLUMN`, or null for any other statement. Only this shape
+// has a benign failure, so only this shape may ever be skipped.
+export function addColumnTarget(sql) {
+  const match = /^[ \t]*ALTER[ \t]+TABLE[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+ADD[ \t]+COLUMN[ \t]+([A-Za-z_][A-Za-z0-9_]*)/i.exec(
+    String(sql || "")
+  );
+  return match ? { table: match[1], column: match[2] } : null;
+}
+
+// A failed migration is forgiven only when the exact column that statement adds already exists. A
+// duplicate for some other column, or any unrelated error, is a real failure and must surface.
+export function isDuplicateAddColumn(sql, message) {
+  const target = addColumnTarget(sql);
+  if (!target) return false;
+  const duplicate = /duplicate column name(?::[ \t]*([A-Za-z_][A-Za-z0-9_]*))?/i.exec(String(message || ""));
+  if (!duplicate) return false;
+  return !duplicate[1] || duplicate[1].toLowerCase() === target.column.toLowerCase();
+}
+
+async function columnExists(env, table, column) {
+  const info = await env.DB.prepare(`PRAGMA table_info('${table}')`).all();
+  return (info.results || []).some((row) => String(row.name).toLowerCase() === column.toLowerCase());
+}
+
 async function migrate(env) {
   for (const sql of MIGRATIONS) {
     try {
       await env.DB.prepare(sql).run();
     } catch (err) {
       const message = String(err && err.message ? err.message : err);
-      // Fresh databases already have the column; anything else is a real problem.
-      if (!/duplicate column name/i.test(message)) throw err;
+      const target = addColumnTarget(sql);
+      // Only an ADD COLUMN whose own column is already there may be skipped...
+      if (!target || !isDuplicateAddColumn(sql, message)) throw err;
+      // ...and the catalogue has to agree before the failure is treated as a no-op.
+      if (!(await columnExists(env, target.table, target.column))) throw err;
     }
   }
 }

@@ -9,12 +9,15 @@ export default function Operator() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
 
   useEffect(() => {
     let alive = true;
     api("/api/operator/session")
-      .then(() => {
-        if (alive) setSession("in");
+      .then((payload) => {
+        if (!alive) return;
+        setCsrfToken(payload && payload.csrfToken ? payload.csrfToken : "");
+        setSession("in");
       })
       .catch(() => {
         if (alive) setSession("out");
@@ -29,8 +32,9 @@ export default function Operator() {
     setBusy(true);
     setError("");
     try {
-      await api("/api/operator/login", { method: "POST", body: JSON.stringify({ password }) });
+      const payload = await api("/api/operator/login", { method: "POST", body: JSON.stringify({ password }) });
       setPassword("");
+      setCsrfToken(payload && payload.csrfToken ? payload.csrfToken : "");
       setSession("in");
     } catch (err) {
       setError(err.message);
@@ -45,6 +49,7 @@ export default function Operator() {
     } catch {
       /* the screen clearing is what matters */
     }
+    setCsrfToken("");
     setSession("out");
   };
 
@@ -88,14 +93,17 @@ export default function Operator() {
     );
   }
 
-  return <OperatorShell onSignOut={signOut} />;
+  return <OperatorShell onSignOut={signOut} csrfToken={csrfToken} onCsrfToken={setCsrfToken} />;
 }
 
-function OperatorShell({ onSignOut }) {
+function OperatorShell({ onSignOut, csrfToken, onCsrfToken }) {
   const [cafes, setCafes] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState("");
+  const [reveal, setReveal] = useState(null);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
     name: "",
     slug: "",
@@ -147,6 +155,47 @@ function OperatorShell({ onSignOut }) {
     }
   };
 
+  // The reset is a sensitive POST, so it carries the CSRF token the console was issued. The response
+  // hands back a fresh one, which replaces the spent token for the next action.
+  const resetPassword = async (slug) => {
+    setResetting(slug);
+    setError("");
+    setNotice("");
+    setReveal(null);
+    setCopied(false);
+    try {
+      const payload = await api(`/api/operator/cafes/${encodeURIComponent(slug)}/reset-password`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrfToken },
+        body: JSON.stringify({}),
+      });
+      if (payload && payload.csrfToken) onCsrfToken(payload.csrfToken);
+      setReveal({ slug: payload.slug, name: payload.name, password: payload.password });
+      setNotice(
+        `Password reset for ${payload.name || payload.slug}. Everyone signed in to that café was signed out.`
+      );
+      await load();
+    } catch (err) {
+      if (err.status === 401) {
+        onSignOut();
+        return;
+      }
+      setError(err.message);
+    } finally {
+      setResetting("");
+    }
+  };
+
+  const copyPassword = async () => {
+    if (!reveal) return;
+    try {
+      await navigator.clipboard.writeText(reveal.password);
+      setCopied(true);
+    } catch {
+      setError("Copy didn't work here — select the password and copy it by hand.");
+    }
+  };
+
   return (
     <div className="admin">
       <header className="admin-top">
@@ -182,14 +231,47 @@ function OperatorShell({ onSignOut }) {
 
           <div className="table-grid">
             {(cafes || []).map((cafe) => (
-              <Link key={cafe.slug} className="table-chip" to={`/c/${cafe.slug}`}>
-                <span>{cafe.name}</span>
-                <small>
-                  /c/{cafe.slug} · {cafe.menuCount} items · {cafe.openCount} open
-                </small>
-              </Link>
+              <div key={cafe.slug} className="table-chip">
+                <Link className="table-chip-link" to={`/c/${cafe.slug}/owner`}>
+                  <span>{cafe.name}</span>
+                  <small>
+                    /c/{cafe.slug} · {cafe.menuCount} items · {cafe.openCount} open
+                  </small>
+                </Link>
+                <button
+                  type="button"
+                  className="btn ghost small-btn"
+                  onClick={() => resetPassword(cafe.slug)}
+                  disabled={resetting === cafe.slug}
+                >
+                  {resetting === cafe.slug ? "Resetting…" : "Reset password"}
+                </button>
+              </div>
             ))}
           </div>
+
+          {reveal && (
+            <div className="reset-reveal">
+              <strong>New owner password for {reveal.name || reveal.slug}</strong>
+              <code>{reveal.password}</code>
+              <div className="reset-reveal-actions">
+                <button type="button" className="btn ghost small-btn" onClick={copyPassword}>
+                  {copied ? "Copied" : "Copy password"}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost small-btn"
+                  onClick={() => {
+                    setReveal(null);
+                    setCopied(false);
+                  }}
+                >
+                  Done
+                </button>
+              </div>
+              <p className="muted small">Shown once. Save it now — it can't be read back later.</p>
+            </div>
+          )}
 
           <form className="add-form" onSubmit={create}>
             <h2>Add a café</h2>
@@ -219,10 +301,11 @@ function OperatorShell({ onSignOut }) {
                   required
                   type="password"
                   autoComplete="new-password"
-                  minLength={6}
+                  minLength={12}
+                  maxLength={100}
                   value={form.password}
                   onChange={(event) => update("password", event.target.value)}
-                  placeholder="At least 6 characters"
+                  placeholder="At least 12 characters"
                 />
               </label>
             </div>

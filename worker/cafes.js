@@ -101,7 +101,11 @@ export async function createCafe(env, { name, slug, password, serviceMode = "tab
   }
 
   const pass = String(password || "");
-  if (pass.length < 6) throw new Error("The owner password needs at least 6 characters.");
+  // The same 12-character floor as an owner password change and an operator reset, so a café cannot
+  // be created with a weaker password than it could later be given.
+  if (pass.length < 12 || pass.length > 100) {
+    throw new Error("The owner password needs at least 12 characters.");
+  }
 
   const mode = serviceMode === "counter" ? "counter" : "tables";
 

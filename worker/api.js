@@ -148,8 +148,15 @@ async function handleCafeApi(request, env, url, ctx, cafe, path) {
 
 const OPERATOR_COOKIE = "staff_operator";
 
+// Operator sessions are `operator:<nonce>`, one random nonce per sign-in, so two logins can never
+// receive the same token and a CSRF row can be tied to one specific session. A bare `operator`
+// subject is the pre-nonce format: it is still accepted so a console already signed in when this
+// ships keeps working until its 12-hour cookie expires, and it can be dropped after that.
 async function checkOperator(env, token) {
-  return (await tokenSubject(env, token)) === "operator";
+  const subject = await tokenSubject(env, token);
+  if (!subject) return false;
+  if (subject === "operator") return true;
+  return /^operator:[0-9a-f]{32}$/.test(subject);
 }
 
 // The console behind /operator: only the person running the deployment sees every client's café.
@@ -158,9 +165,11 @@ async function operatorApi(request, env, path) {
 
   if (path[0] === "session" && method === "GET") {
     if (!authConfigured(env)) return authUnavailable("The operator console");
-    return (await checkOperator(env, readCookie(request, OPERATOR_COOKIE)))
-      ? json({ ok: true, expiresIn: SESSION_MAX_AGE })
-      : json({ error: "Not signed in." }, 401);
+    const token = readCookie(request, OPERATOR_COOKIE);
+    if (!(await checkOperator(env, token))) return json({ error: "Not signed in." }, 401);
+    // The console picks its CSRF token up here and on login. Only the token hash is stored, so a
+    // database read cannot be replayed as a mutating request.
+    return json({ ok: true, expiresIn: SESSION_MAX_AGE, csrfToken: await issueCsrfToken(env, token) });
   }
 
   if (path[0] === "login" && method === "POST") return operatorLogin(request, env);
@@ -176,6 +185,9 @@ async function operatorApi(request, env, path) {
 
   if (path[0] === "cafes" && path.length === 1 && method === "GET") return operatorCafes(env);
   if (path[0] === "cafes" && path.length === 1 && method === "POST") return operatorCreateCafe(request, env);
+  if (path[0] === "cafes" && path.length === 3 && path[2] === "reset-password" && method === "POST") {
+    return operatorResetPassword(request, env, path[1]);
+  }
 
   return json({ error: "Not found" }, 404);
 }
@@ -211,8 +223,9 @@ async function operatorLogin(request, env) {
   }
 
   loginFailures.delete(key);
-  return json({ ok: true, expiresIn: SESSION_MAX_AGE }, 200, {
-    "set-cookie": sessionCookie(request, await issueToken(env, "operator"), SESSION_MAX_AGE, OPERATOR_COOKIE),
+  const operatorToken = await issueToken(env, operatorSubject());
+  return json({ ok: true, expiresIn: SESSION_MAX_AGE, csrfToken: await issueCsrfToken(env, operatorToken) }, 200, {
+    "set-cookie": sessionCookie(request, operatorToken, SESSION_MAX_AGE, OPERATOR_COOKIE),
   });
 }
 
@@ -1460,8 +1473,17 @@ async function login(request, env, cafe) {
   }
 
   loginFailures.delete(key);
+
+  // Refuse to mint a session from a version that cannot be trusted: a token stamped with a bad
+  // number would either never match or match the wrong thing.
+  const version = currentAuthVersion(cafe);
+  if (version === null) {
+    console.error("Refusing an owner session: stored auth_version is invalid", { cafeId: cafe.id });
+    return json({ error: "This café's sign-in isn't available right now. Please ask the operator." }, 503);
+  }
+
   return json({ ok: true, expiresIn: SESSION_MAX_AGE }, 200, {
-    "set-cookie": sessionCookie(request, await issueToken(env, `cafe:${cafe.id}`), SESSION_MAX_AGE, cookieName(cafe)),
+    "set-cookie": sessionCookie(request, await issueToken(env, ownerSubject(cafe, version)), SESSION_MAX_AGE, cookieName(cafe)),
   });
 }
 
@@ -1689,23 +1711,61 @@ async function adminSaveSettings(request, env, cafe) {
 
   // The board password is per café, so a client can lock their own staff out without touching
   // anyone else's deployment.
+  // A password set here is a real credential change, so it moves the café's auth version too.
+  let passwordChanged = false;
   if (body.password !== undefined) {
     const password = String(body.password);
-    if (password.length < 6 || password.length > 100) {
-      return json({ error: "The owner password needs 6–100 characters." }, 400);
+    // The same 12-character floor the operator reset enforces, so a password cannot be weakened
+    // by setting it here instead.
+    if (password.length < 12 || password.length > 100) {
+      return json({ error: "The owner password needs at least 12 characters." }, 400);
     }
     patch.pass_hash = await hashPassword(password);
+    passwordChanged = true;
   }
 
   const entries = Object.entries(patch);
   if (entries.length === 0) return json({ error: "Nothing to save." }, 400);
 
   // Column names come from the fixed set validated above, never from the request body.
-  await env.DB.prepare(`UPDATE cafes SET ${entries.map(([column]) => `${column} = ?`).join(", ")} WHERE id = ?`)
-    .bind(...entries.map(([, value]) => value), cafe.id)
+  const columns = entries.map(([column]) => `${column} = ?`);
+  const values = entries.map(([, value]) => value);
+  if (passwordChanged) {
+    columns.push("auth_version = auth_version + 1");
+    columns.push("password_changed_at = ?");
+    values.push(Date.now());
+  }
+
+  await env.DB.prepare(`UPDATE cafes SET ${columns.join(", ")} WHERE id = ?`)
+    .bind(...values, cafe.id)
     .run();
 
   const updated = await findCafeBySlug(env, cafe.slug);
+
+  // Every session minted before the change is now on an old version, including the one that made
+  // it. The owner who changed the password gets a fresh cookie, so only their other devices are
+  // signed out.
+  if (passwordChanged) {
+    const version = currentAuthVersion(updated);
+    if (version === null) {
+      // Cannot happen through the code paths above, but a session must never be stamped from a
+      // value that is not a valid version.
+      console.error("Password changed but auth_version is invalid; not reissuing a session", {
+        cafeId: updated.id,
+      });
+      return json({ slug: updated.slug, settings: cafeSettings(updated) });
+    }
+
+    return json({ slug: updated.slug, settings: cafeSettings(updated) }, 200, {
+      "set-cookie": sessionCookie(
+        request,
+        await issueToken(env, ownerSubject(updated, version)),
+        SESSION_MAX_AGE,
+        cookieName(updated)
+      ),
+    });
+  }
+
   return json({ slug: updated.slug, settings: cafeSettings(updated) });
 }
 
@@ -1866,8 +1926,242 @@ async function tokenSubject(env, token) {
   return constantTimeEqual(signature, expected) ? subject : null;
 }
 
+// An operator session subject: `operator:<16 random bytes as hex>`. The nonce is inside the signed
+// payload, so it cannot be stripped or reused, and it is what keeps two same-millisecond sign-ins
+// from minting the same token.
+function operatorSubject() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return `operator:${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+// An owner session carries the version its password had when it was minted.
+//
+// An absent property (a database that has not run the reset migration) is version 1, which is what a
+// legacy two-part token carries. A value that is *present but invalid* is not the same thing and
+// must never be read as 1: doing so would silently let an old version-1 token authenticate against
+// corrupt state. Invalid values return null and every caller fails closed.
+export function authVersionFrom(raw) {
+  if (raw === undefined) return 1;
+  if (typeof raw === "number") {
+    return Number.isSafeInteger(raw) && raw >= 1 ? raw : null;
+  }
+  // D1 returns INTEGER columns as numbers; a canonical digit string is accepted on the same strict
+  // terms. Null, zero, negatives, fractions, NaN, unsafe integers, "", "01", " 3" and objects are
+  // all invalid.
+  if (typeof raw === "string" && /^[1-9][0-9]*$/.test(raw)) {
+    const value = Number(raw);
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  return null;
+}
+
+function currentAuthVersion(cafe) {
+  return authVersionFrom(cafe ? cafe.auth_version : undefined);
+}
+
+function ownerSubject(cafe, version) {
+  return `cafe:${cafe.id}:${version}`;
+}
+
+// `cafe:12` predates versioning and counts as version 1; `cafe:12:3` is only good while the cafe
+// is still on version 3. The id and the version are normalised and validated on their own.
+function parseOwnerSubject(subject) {
+  const parts = String(subject || '').split(':');
+  if (parts[0] !== 'cafe') return null;
+  if (parts.length !== 2 && parts.length !== 3) return null;
+  if (!/^\d+$/.test(parts[1])) return null;
+  const id = Number(parts[1]);
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  if (parts.length === 2) return { owner: `cafe:${id}`, version: 1 };
+  if (!/^\d+$/.test(parts[2])) return null;
+  const version = Number(parts[2]);
+  if (!Number.isSafeInteger(version) || version < 1) return null;
+  return { owner: `cafe:${id}`, version };
+}
+
 async function checkToken(env, token, cafe) {
-  return (await tokenSubject(env, token)) === `cafe:${cafe.id}`;
+  const subject = await tokenSubject(env, token);
+  if (!subject) return false;
+  const parsed = parseOwnerSubject(subject);
+  if (!parsed) return false;
+  if (parsed.owner !== `cafe:${cafe.id}`) return false;
+  // An invalid stored version fails closed: no token authenticates against it, not even the
+  // version-1 token that a missing column would have accepted.
+  const expected = currentAuthVersion(cafe);
+  if (expected === null) return false;
+  // A reset bumps the version, so every token minted before it stops matching in the same instant.
+  return parsed.version === expected;
+}
+
+/* -------------------------------------------------------------- csrf + reset */
+
+const CSRF_HEADER = 'x-csrf-token';
+
+// 32 random bytes from the platform CSPRNG, encoded like a session token so it survives a header.
+async function issueCsrfToken(env, operatorToken) {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const token = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const now = Date.now();
+
+  // Only hashes are stored: the raw token lives in the operator tab and the session token only in
+  // its HttpOnly cookie, so neither can be read back out of the database.
+  await env.DB.prepare('DELETE FROM csrf_tokens WHERE expires < ?').bind(now).run();
+  await env.DB.prepare(
+    'INSERT INTO csrf_tokens (token_hash, operator_key_hash, expires, created) VALUES (?, ?, ?, ?)'
+  )
+    .bind(await sha256Hex(token), await sha256Hex(operatorToken), now + SESSION_MAX_AGE * 1000, now)
+    .run();
+
+  return token;
+}
+
+// Two independent checks: the browser must say the request came from this exact origin, and the
+// value in the header must hash to a live row bound to the session cookie that sent it.
+async function verifyCsrf(request, env) {
+  const origin = request.headers.get('origin');
+  if (!origin || origin === 'null' || origin !== new URL(request.url).origin) {
+    return { ok: false, reason: 'origin' };
+  }
+
+  const presented = String(request.headers.get(CSRF_HEADER) || '').trim();
+  if (!presented) return { ok: false, reason: 'missing' };
+
+  const operatorToken = readCookie(request, OPERATOR_COOKIE);
+  if (!operatorToken) return { ok: false, reason: 'session' };
+
+  const row = await env.DB.prepare('SELECT operator_key_hash, expires FROM csrf_tokens WHERE token_hash = ?')
+    .bind(await sha256Hex(presented))
+    .first();
+  if (!row) return { ok: false, reason: 'unknown' };
+  if (Number(row.expires) <= Date.now()) return { ok: false, reason: 'expired' };
+  if (!constantTimeEqual(String(row.operator_key_hash), await sha256Hex(operatorToken))) {
+    return { ok: false, reason: 'session' };
+  }
+  return { ok: true };
+}
+
+// An audit row never carries a credential: no password, no hash, no session or CSRF token. An
+// unknown cafe is recorded with a null cafe_id rather than dropped, and the table has no foreign
+// key, so that insert cannot fail for the absence of the row it is reporting.
+async function recordPasswordReset(env, cafeId, outcome) {
+  try {
+    await env.DB.prepare(
+      'INSERT INTO password_resets (cafe_id, operator_identity, action, outcome, timestamp) ' +
+        "VALUES (?, 'operator', 'reset_password', ?, ?)"
+    )
+      .bind(cafeId == null ? null : Number(cafeId), outcome, Date.now())
+      .run();
+  } catch (err) {
+    console.error('Password reset audit write failed', {
+      outcome,
+      error: err && err.message ? err.message : String(err),
+    });
+  }
+}
+
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const RESET_MIN_LENGTH = 12;
+
+// Excludes look-alike characters so a password read off a screen is typed correctly.
+function generatePassword(length = 16) {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let out = '';
+  for (const byte of bytes) out += PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length];
+  return out;
+}
+
+// The two statements of a reset, kept in one place so their SQL and bindings can be reviewed and
+// tested on their own. The UPDATE is guarded by the version it expects; the audit row is selected
+// out of the cafés table afterwards, so it can only exist for an update that actually landed.
+export function passwordResetBatch(env, { cafeId, fromVersion, toVersion, passHash, now }) {
+  return [
+    env.DB.prepare(
+      "UPDATE cafes SET pass_hash = ?, auth_version = auth_version + 1, password_changed_at = ? " +
+        "WHERE id = ? AND auth_version = ?"
+    ).bind(passHash, now, cafeId, fromVersion),
+    env.DB.prepare(
+      "INSERT INTO password_resets (cafe_id, operator_identity, action, outcome, timestamp) " +
+        "SELECT c.id, 'operator', 'reset_password', 'success', ? FROM cafes c " +
+        "WHERE c.id = ? AND c.auth_version = ? AND c.password_changed_at = ?"
+    ).bind(now, cafeId, toVersion, now),
+  ];
+}
+
+// Operator-only. The UPDATE, the version bump and the success audit row are one D1 batch, and the
+// audit insert only selects when that UPDATE landed, so a failure cannot leave a password change
+// without its version bump or without its record.
+async function operatorResetPassword(request, env, rawSlug) {
+  const slug = String(rawSlug || '').toLowerCase();
+  const cafe = await findCafeBySlug(env, slug);
+
+  const csrf = await verifyCsrf(request, env);
+  if (!csrf.ok) {
+    await recordPasswordReset(env, cafe ? cafe.id : null, 'csrf_rejected');
+    return json({ error: "That request couldn't be verified. Reload the console and try again." }, 403);
+  }
+
+  if (!cafe) {
+    await recordPasswordReset(env, null, 'unknown_cafe');
+    return json({ error: 'No cafe found at that web address.' }, 404);
+  }
+
+  const body = (await readJson(request)) || {};
+  const supplied = body.password == null ? '' : String(body.password);
+  const password = supplied === '' ? generatePassword() : supplied;
+  if (password.length < RESET_MIN_LENGTH || password.length > 100) {
+    await recordPasswordReset(env, cafe.id, 'short_password');
+    return json({ error: 'The new password needs at least 12 characters.' }, 400);
+  }
+
+  const fromVersion = currentAuthVersion(cafe);
+  if (fromVersion === null) {
+    // Fail closed instead of letting a corrupt value be "repaired" into something an old token
+    // could match; the row has to be fixed deliberately.
+    await recordPasswordReset(env, cafe.id, 'invalid_version');
+    return json(
+      { error: "This café's stored session version is invalid. Fix the café row before resetting." },
+      409
+    );
+  }
+
+  const passHash = await hashPassword(password);
+  const now = Date.now();
+  const toVersion = fromVersion + 1;
+
+  let results;
+  try {
+    results = await env.DB.batch(
+      passwordResetBatch(env, { cafeId: cafe.id, fromVersion, toVersion, passHash, now })
+    );
+  } catch (err) {
+    console.error('Password reset failed', {
+      cafeId: cafe.id,
+      error: err && err.message ? err.message : String(err),
+    });
+    return json({ error: "We couldn't reset that password. Nothing was changed." }, 500);
+  }
+
+  const updated = Number(results && results[0] && results[0].meta && results[0].meta.changes);
+  const audited = Number(results && results[1] && results[1].meta && results[1].meta.changes);
+  if (updated !== 1 || audited !== 1) {
+    // The conditional insert refused a record for an update that did not happen. The batch is a
+    // transaction, so the password was left exactly as it was.
+    await recordPasswordReset(env, cafe.id, 'conflict');
+    return json({ error: "This cafe's password changed while you were working. Reload and try again." }, 409);
+  }
+
+  const refreshed = await findCafeBySlug(env, slug);
+  return json({
+    ok: true,
+    slug: cafe.slug,
+    name: refreshed ? refreshed.name : cafe.name,
+    password,
+    authVersion: toVersion,
+    passwordChangedAt: now,
+    csrfToken: await issueCsrfToken(env, readCookie(request, OPERATOR_COOKIE)),
+  });
 }
 
 async function sign(env, message) {

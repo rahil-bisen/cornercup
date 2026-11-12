@@ -738,6 +738,8 @@ function SettingsTab({ call, onSaved }) {
           <input
             type="password"
             autoComplete="new-password"
+            minLength={12}
+            maxLength={100}
             value={form.password || ""}
             onChange={(event) => update("password", event.target.value)}
             placeholder="Leave blank to keep the current password"
