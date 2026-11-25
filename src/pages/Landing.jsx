@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, cafePath } from "../lib/api.js";
 import { cafeName, useSiteConfig } from "../lib/config.js";
+import { gatewayEnabled } from "../lib/payments.js";
 import SiteFooter from "../components/SiteFooter.jsx";
 
 // The first screen a guest sees after scanning a table QR code, so it is built mobile-first:
@@ -13,6 +14,8 @@ export default function Landing() {
   const cafe = cafeName(config);
   // Counter-service cafés have no tables to scan, so the page sells pickup instead of table service.
   const counterService = Boolean(config && config.service && config.service.mode === "counter");
+  // Only promise UPI/cards/wallets when this café can actually take an online payment.
+  const online = gatewayEnabled(config);
 
   useEffect(() => {
     api("/api/tables")
@@ -36,7 +39,9 @@ export default function Landing() {
         <h1>{counterService ? "Skip the queue" : "Order without the wait"}</h1>
         <p className="landing-lede">
           {counterService
-            ? `Browse the live menu at ${cafe}, pay from your phone and collect at the counter when your number is called.`
+            ? online
+              ? `Browse the live menu at ${cafe}, pay from your phone and collect at the counter when your number is called.`
+              : `Browse the live menu at ${cafe}, order from your phone, then pay and collect at the counter when your number is called.`
             : `Browse the live menu at ${cafe} and send your order straight to the kitchen — no app, no waiting to catch someone's eye.`}
         </p>
       </section>
@@ -48,7 +53,7 @@ export default function Landing() {
             <span aria-hidden="true">→</span>
           </Link>
           <p className="landing-note">
-            UPI, cards and wallets accepted · paying at the counter is fine too
+            {online ? "UPI, cards and wallets accepted · paying at the counter is fine too" : "Pay at the counter when you collect"}
           </p>
         </section>
       ) : (
@@ -119,8 +124,12 @@ export default function Landing() {
               <strong>{counterService ? "Pay and collect" : "Send it to the kitchen"}</strong>
               <p className="muted small">
                 {counterService
-                  ? "Pay securely by UPI, card or wallet. We'll call your pickup number when it's ready."
-                  : "Pay securely at your table — UPI, card or wallet, no app to install."}
+                  ? online
+                    ? "Pay securely by UPI, card or wallet. We'll call your pickup number when it's ready."
+                    : "Pay at the counter. We'll call your pickup number when it's ready."
+                  : online
+                    ? "Pay securely at your table — UPI, card or wallet, no app to install."
+                    : "Your order goes straight to the kitchen — pay at the counter, no app to install."}
               </p>
             </div>
           </li>
