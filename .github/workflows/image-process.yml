@@ -1,0 +1,51 @@
+name: image-process
+
+# PREPARED, NOT WIRED. This workflow is the intended home of food-photo normalisation, but it cannot
+# be safe or useful until a private repository exists, because:
+#   * the job must prove the request came from the Corner Cup Worker (short-lived OIDC token, audience
+#     checked here, upload scope bound to one café/item) — that trust relationship needs a repository
+#     and a Worker secret that only the owner can create;
+#   * the output must be uploaded into R2 for that same café/item, which needs credentials this
+#     repository does not hold;
+#   * running it before then would normalise images that can never be published.
+#
+# Until those exist, the Worker's own upload path stays as it is: bytes are validated and stored, and
+# the image is served from R2. No unverified image is publicly servable without an owner upload.
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Free-text note for the run log (no credentials)"
+        required: false
+        default: "manual normaliser test"
+
+permissions:
+  contents: read
+
+jobs:
+  normalise:
+    name: normalise with sharp
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the pipeline
+        working-directory: image-pipeline
+        run: npm install --no-audit --no-fund
+
+      - name: Self-test the normaliser
+        working-directory: image-pipeline
+        run: npm test
+
+      # A real run would take the object from R2, normalise it, and put the result back. Both halves
+      # need the OIDC-verified Worker call described above, so they are not implemented here.
+      - name: Explain why there is nothing to upload yet
+        run: |
+          echo "No input object: normalisation is triggered by an authenticated Worker request,"
+          echo "which needs the private repository and its OIDC audience binding."

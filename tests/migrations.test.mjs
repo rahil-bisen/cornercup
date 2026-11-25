@@ -186,3 +186,132 @@ test("migration errors: only a duplicate of the very column being added is skipp
     false
   );
 });
+
+// Stage 3B menu photography. The two columns are additive and nullable: an existing menu row keeps
+// loading with "no photograph", which is what makes the feature safe to ship before any image exists.
+// order_items is deliberately untouched — an order keeps the name, emoji and price it was sold with.
+test("Stage 3B: menu photography columns are nullable, additive and re-runnable", () => {
+  const fresh = new DatabaseSync(":memory:");
+  runAll(fresh, SCHEMA);
+
+  // Neither column lives in the base schema, so a fresh database and a migrated one converge through
+  // the same statements.
+  assert.ok(
+    !SCHEMA.some((sql) => typeof sql === "string" && /image_key|image_updated_at/.test(sql)),
+    "the base schema must not declare the photography columns too"
+  );
+  assert.ok(!columns(fresh, "menu_items").includes("image_key"), "a fresh row starts without a photo");
+
+  runAll(fresh, MIGRATIONS);
+  runAll(fresh, POST_MIGRATIONS);
+  const cols = columns(fresh, "menu_items");
+  assert.ok(cols.includes("image_key"), "image_key exists after migration");
+  assert.ok(cols.includes("image_updated_at"), "image_updated_at exists after migration");
+
+  fresh
+    .prepare(
+      "INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, available, sort) VALUES (1, 'Mains', 'Migrated Bowl', '', 12500, '🍜', 1, 10)"
+    )
+    .run();
+  const inserted = fresh.prepare("SELECT image_key, image_updated_at FROM menu_items").get();
+  assert.equal(inserted.image_key, null, "an item without a photo stores NULL, not an empty key");
+  assert.equal(inserted.image_updated_at, null);
+
+  // A second boot only meets the columns it added, and changes no row.
+  assert.deepEqual(runAll(fresh, MIGRATIONS), settle(MIGRATIONS));
+  assert.equal(fresh.prepare("SELECT COUNT(*) AS value FROM menu_items").get().value, 1);
+  fresh.close();
+
+  const legacy = new DatabaseSync(":memory:");
+  runAll(legacy, LEGACY_SCHEMA);
+  legacy
+    .prepare(
+      "INSERT INTO menu_items (category, name, description, price_cents, emoji, available, sort) VALUES ('Snacks', 'Legacy Toast', '', 9000, '🍞', 1, 5)"
+    )
+    .run();
+  const orderItemColumnsBefore = columns(legacy, "order_items");
+
+  runAll(legacy, MIGRATIONS);
+  runAll(legacy, POST_MIGRATIONS);
+
+  const legacyRow = legacy
+    .prepare("SELECT id, name, emoji, price_cents, image_key, image_updated_at FROM menu_items")
+    .get();
+  assert.equal(legacyRow.name, "Legacy Toast", "the existing item survives the migration");
+  assert.equal(legacyRow.emoji, "🍞", "the emoji fallback is preserved");
+  assert.equal(Number(legacyRow.price_cents), 9000);
+  assert.equal(legacyRow.image_key, null, "an existing item keeps no photograph until one is uploaded");
+  assert.equal(legacyRow.image_updated_at, null);
+
+  assert.deepEqual(
+    columns(legacy, "order_items"),
+    orderItemColumnsBefore,
+    "order_items is not touched by the photography migration"
+  );
+
+  // The column is a plain TEXT key, so the server can write and clear it with one statement each.
+  legacy.prepare("UPDATE menu_items SET image_key = ?, image_updated_at = ? WHERE id = ?").run(
+    "cafes/1/menu/1/2f9c6a44-0f5a-4f3a-9d33-8f6a0e4c1b77.png",
+    "2026-01-01T00:00:00.000Z",
+    legacyRow.id
+  );
+  const attached = legacy.prepare("SELECT image_key FROM menu_items WHERE id = ?").get(legacyRow.id);
+  assert.match(attached.image_key, /^cafes\/1\/menu\/1\//, "the key is scoped to its café and item");
+  legacy.prepare("UPDATE menu_items SET image_key = NULL WHERE id = ?").run(legacyRow.id);
+  assert.equal(
+    legacy.prepare("SELECT image_key FROM menu_items WHERE id = ?").get(legacyRow.id).image_key,
+    null,
+    "removing the photo restores the default by clearing the key"
+  );
+
+  assert.deepEqual(runAll(legacy, MIGRATIONS), settle(MIGRATIONS), "a second run is still a no-op");
+  assert.equal(
+    legacy.prepare("SELECT COUNT(*) AS value FROM menu_items").get().value,
+    1,
+    "re-running the migrations changes no row"
+  );
+  legacy.close();
+});
+
+test("owner_sessions is created for a fresh and a legacy database, and a second boot is a no-op", () => {
+  const fresh = new DatabaseSync(":memory:");
+  runAll(fresh, SCHEMA);
+  runAll(fresh, MIGRATIONS);
+  runAll(fresh, POST_MIGRATIONS);
+  assert.ok(tables(fresh).includes("owner_sessions"), "a fresh database gets the session table");
+  // F-07 phase 1 appends two nullable identity columns to this table; they are last, and the four
+  // original columns keep their order.
+  assert.deepEqual(columns(fresh, "owner_sessions"), [
+    "session_id",
+    "cafe_id",
+    "created",
+    "expires",
+    "workos_user_id",
+    "workos_session_id",
+  ]);
+  const freshIndexes = fresh
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+    .all()
+    .map((row) => row.name);
+  assert.ok(freshIndexes.includes("idx_owner_sessions_expires"));
+  assert.ok(freshIndexes.includes("idx_owner_sessions_cafe"));
+  fresh.close();
+
+  const legacy = new DatabaseSync(":memory:");
+  runAll(legacy, LEGACY_SCHEMA);
+  runAll(legacy, MIGRATIONS);
+  runAll(legacy, POST_MIGRATIONS);
+  assert.ok(tables(legacy).includes("owner_sessions"), "a legacy database is upgraded in place");
+  const kept = legacy.prepare("SELECT slug FROM cafes").all();
+  assert.equal(kept.length, 1, "the existing data is untouched");
+  assert.equal(kept[0].slug, "legacy-cafe");
+
+  // A second boot runs every statement again. Only an ADD COLUMN duplicate may be forgiven.
+  const again = runAll(legacy, MIGRATIONS);
+  again.forEach((result, index) => {
+    assert.ok(result === null || result === "duplicate-column", `re-run ${index} reported ${result}`);
+  });
+  runAll(legacy, POST_MIGRATIONS);
+  assert.equal(legacy.prepare("SELECT COUNT(*) AS count FROM owner_sessions").get().count, 0);
+  legacy.close();
+});

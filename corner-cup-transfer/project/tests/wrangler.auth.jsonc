@@ -1,0 +1,23 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "corner-cup-auth-harness",
+  "main": "worker.mjs",
+  "compatibility_date": "2025-11-01",
+  "vars": {
+    "ADMIN_SECRET": "test-admin-secret-for-harness-only",
+    // Deliberately still configured: sign-in must ignore it entirely (F-01 regression fixture).
+    "ADMIN_PIN": "1234",
+    // Seeds the primary café's hash on first boot; the auth tests sign in with this password.
+    "OWNER_PASSWORD": "harness-bootstrap-password",
+    "OPERATOR_PASSWORD": "operator-test-password",
+    // Test-only: make expired-row cleanup deterministic for the F-06 cleanup tests.
+    "RATE_LIMIT_CLEANUP_PROBABILITY": "1"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

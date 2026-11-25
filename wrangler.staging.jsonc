@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "corner-cup-staging",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-11-01",
+  // Argon2id ships two small pre-compiled modules (simd and no-simd). workerd never compiles wasm
+  // from bytes, so the binaries must be imported statically through this rule. Identical to the rule
+  // the production configuration already uses.
+  "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
+  // The Worker answers /api/* itself and hands every other request to the SPA bundle that Vite writes
+  // to ./dist. `run_worker_first` keeps the API reachable, and single-page-application fallback makes
+  // deep links such as /c/<slug>/order/<id> resolve to index.html instead of 404.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup-staging",
+      "database_id": "39a7899c-0130-4536-9570-f07b6c29b2d4"
+    }
+  ],
+  "vars": {
+    "CAFE_NAME": "Corner Cup Staging",
+    "SERVICE_MODE": "counter",
+    "CAFE_TZ_OFFSET_MIN": "330"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

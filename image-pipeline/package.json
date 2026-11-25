@@ -1,0 +1,13 @@
+{
+  "name": "corner-cup-image-pipeline",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Re-encodes owner-uploaded food photos outside the Worker, where sharp can run without Free-plan CPU limits.",
+  "scripts": {
+    "test": "node self-test.mjs"
+  },
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}

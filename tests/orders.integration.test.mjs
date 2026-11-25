@@ -118,3 +118,44 @@ test("T6: abandoning a committed checkout returns the order and leaves the claim
     await call("/clean", { cafeId: cafe.cafeId });
   }
 });
+
+// F-14: when no free order id can be minted, the guest gets a controlled 503 rather than a 500, the
+// idempotency claim is handed back, and the same key succeeds on the next attempt.
+test("T7: order-id exhaustion answers 503, releases the claim, and the retry succeeds", { skip }, async () => {
+  const cafe = await call("/seed", { serviceMode: "counter" });
+  const body = JSON.stringify({ note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] });
+  const key = crypto.randomUUID();
+
+  try {
+    const exhausted = await fetch(`${HARNESS}/api/cafes/${cafe.slug}/orders`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": key,
+        "x-harness-exhaust-order-ids": "1",
+      },
+      body,
+    });
+
+    assert.equal(exhausted.status, 503, "capacity is a 503, not a 500 and not a bogus id");
+    const failure = await exhausted.json();
+    assert.match(String(failure.error), /try again/i);
+
+    const after = await call("/read", { cafeId: cafe.cafeId, key });
+    assert.equal(after.orders.length, 0, "no order was written");
+    assert.equal(after.itemCount, 0, "no item rows were written");
+    assert.equal(after.claim, null, "the claim was released so the guest is not locked out");
+
+    // The same key, without the forced exhaustion, now succeeds.
+    const retry = await order(cafe, "/orders", body, key);
+    assert.equal(retry.status, 201, "the retry is accepted with the same idempotency key");
+    const { order: created } = await retry.json();
+    assert.equal(created.id.length, 6, "the normal path still mints a readable short code");
+
+    const stored = await call("/read", { cafeId: cafe.cafeId, key });
+    assert.equal(stored.orders.length, 1, "exactly one order exists after the retry");
+    assert.equal(stored.claim.state, "committed");
+  } finally {
+    await call("/clean", { cafeId: cafe.cafeId });
+  }
+});

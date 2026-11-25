@@ -9,6 +9,16 @@ ADMIN_SECRET=
 # Unlocks /operator, the console that creates cafés. No default: unset closes the console.
 OPERATOR_PASSWORD=
 
+# Encrypts each café's TOTP secret at rest. Required for two-factor sign-in: there is no fallback to
+# ADMIN_SECRET, and enrollment answers 503 while this is missing or malformed. Must be exactly 32
+# random bytes as unpadded base64url (43 characters) and independent of every other secret.
+# Generate (once, locally) — never commit the output:
+#   openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+# After rotating this value, put the retired value in MFA_ENC_KEY_PREVIOUS so existing enrollments
+# keep working (decrypt-only); new enrollments always use MFA_ENC_KEY.
+# MFA_ENC_KEY=
+# MFA_ENC_KEY_PREVIOUS=
+
 # The values below are only the STARTING point for the FIRST café on a deployment. Once the owner
 # saves "Café setup" in the staff panel, D1 holds the real name, service mode and clock, and these
 # are ignored. Every later café is created from /operator with its own hashed password.

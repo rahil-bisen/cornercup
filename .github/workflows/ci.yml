@@ -1,0 +1,80 @@
+name: ci
+
+# Every check runs against disposable local harness databases. No production secret, no Cloudflare
+# credential and no deployment step belongs in this file: CI proves the code, it does not ship it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: test, build, audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The lockfile is the source of truth: `npm ci` fails if package.json and package-lock.json
+      # disagree, which is exactly the drift this pipeline must catch.
+      - name: Install from the lockfile
+        run: npm ci
+
+      - name: Syntax-check the Worker
+        run: |
+          node --check worker/index.js
+          for file in worker/*.js; do node --check "$file"; done
+
+      # The suites talk to two real `wrangler dev` workers so D1 behaviour, cookies, CSRF and the
+      # Workers runtime are exercised rather than mocked. The harness configs create their own local
+      # databases under .wrangler/ and never touch a deployed resource.
+      - name: Start the local harnesses
+        run: |
+          npx wrangler dev --config tests/harness/wrangler.auth.jsonc --port 8790 --ip 127.0.0.1 > /tmp/harness-auth.log 2>&1 &
+          npx wrangler dev --config tests/harness/wrangler.jsonc --port 8789 --ip 127.0.0.1 > /tmp/harness-batch.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS -m 2 http://127.0.0.1:8790/api/health > /dev/null \
+              && curl -fsS -m 2 http://127.0.0.1:8789/api/health > /dev/null; then
+              echo "both harnesses answered"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the harnesses did not become ready" >&2
+          tail -50 /tmp/harness-auth.log /tmp/harness-batch.log >&2
+          exit 1
+
+      - name: Test
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      # Production dependencies only: devDependencies never ship to the Worker, so a dev-only advisory
+      # would otherwise block the build without changing what is deployed.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Upload harness logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-logs
+          path: |
+            /tmp/harness-auth.log
+            /tmp/harness-batch.log
+          retention-days: 7

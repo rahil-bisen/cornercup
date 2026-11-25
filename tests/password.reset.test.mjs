@@ -1,7 +1,8 @@
 // Regression tests for the operator "Reset owner password" feature.
 //
 // They run against the auth-enabled harness (tests/harness/wrangler.auth.jsonc), which carries a known
-// ADMIN_SECRET, ADMIN_PIN and OPERATOR_PASSWORD. Tokens are minted in the test with that same secret so
+// ADMIN_SECRET and OPERATOR_PASSWORD, and every seeded café carries its own owner password hash.
+// Tokens are minted in the test with that same secret so
 // a legacy two-part session can be presented exactly as an old browser would send it.
 
 import test from "node:test";
@@ -11,7 +12,9 @@ import { createHmac } from "node:crypto";
 const HARNESS = process.env.AUTH_HARNESS_URL || "http://127.0.0.1:8790";
 const ADMIN_SECRET = "test-admin-secret-for-harness-only";
 const OPERATOR_PASSWORD = "operator-test-password";
-const STAFF_LEGACY_PASSWORD = "1234";
+import { HARNESS_OWNER_PASSWORD } from "./harness/credentials.mjs";
+
+const STAFF_PASSWORD = HARNESS_OWNER_PASSWORD;
 
 let alive = false;
 try {
@@ -33,6 +36,14 @@ function prefix(extra = {}) {
   return { ...jsonHeaders, origin: HARNESS, ...extra };
 }
 
+// Stage 17B: owner mutations require a live CSRF token, so the fixture reads one the way the board
+// does before it writes.
+async function csrfToken(slug, cookie) {
+  const res = await fetch(`${HARNESS}/api/cafes/${slug}/admin/session`, { headers: { cookie } });
+  const payload = await res.json().catch(() => ({}));
+  return (payload && payload.csrfToken) || "";
+}
+
 // The Worker signs `expires.subject` with HMAC-SHA256(ADMIN_SECRET), base64url, unpadded.
 function mintToken(subject, expires = Date.now() + 60 * 60 * 1000) {
   const payload = `${expires}.${subject}`;
@@ -49,11 +60,11 @@ function staffCookie(cafe, token) {
   return { cookie: `staff_session_${cafe.slug}=${encodeURIComponent(token)}` };
 }
 
-async function seed(serviceMode = "counter") {
+async function seed(serviceMode = "counter", options = {}) {
   const res = await fetch(`${HARNESS}/seed`, {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify({ serviceMode }),
+    body: JSON.stringify({ serviceMode, ...options }),
   });
   assert.equal(res.ok, true, `/seed answered ${res.status}`);
   return res.json();
@@ -128,6 +139,23 @@ async function staffSession(cafe, token) {
   return fetch(`${HARNESS}/api/cafes/${cafe.slug}/admin/session`, { headers: staffCookie(cafe, token) });
 }
 
+// The `name=value` pair from a response, whichever header API the runtime exposes.
+function cookieFrom(res) {
+  const cookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+  return String(cookies[0] || res.headers.get("set-cookie") || "").split(";")[0];
+}
+
+// A genuine session: signed in the way the board signs in, so it carries a session_id row.
+async function realSession(cafe, password = STAFF_PASSWORD) {
+  const res = await staffLogin(cafe, password);
+  assert.equal(res.status, 200, `${cafe.slug} signs in for the session fixture`);
+  return cookieFrom(res);
+}
+
+function sessionWithCookie(cafe, cookie) {
+  return fetch(`${HARNESS}/api/cafes/${cafe.slug}/admin/session`, { headers: prefix({ cookie }) });
+}
+
 async function staffLogin(cafe, password) {
   return fetch(`${HARNESS}/api/cafes/${cafe.slug}/admin/login`, {
     method: "POST",
@@ -137,25 +165,33 @@ async function staffLogin(cafe, password) {
 }
 
 test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
-  const cafeA = await seed("counter");
+  // Café A deliberately starts with no stored password, which is what the "a refused reset must not
+  // set a password" assertions below read. It only ever signs in after the operator has reset it.
+  const cafeA = await seed("counter", { noPassword: true });
   const cafeB = await seed("counter");
-  const sessionA = mintToken(`cafe:${cafeA.cafeId}`);
-  const sessionB = mintToken(`cafe:${cafeB.cafeId}`);
+  // Café B gets a real session, minted the way the board mints one. Café A starts with no password
+  // at all, so it cannot hold a session until the operator resets it; that one is captured below.
+  const sessionB = await realSession(cafeB);
+  let sessionAAfterFirstReset = null;
 
   let operator = null;
   let newPassword = "";
   let rotatedCsrf = "";
 
   try {
-    await t.test("legacy two-part tokens authenticate before any reset", async () => {
-      const res = await staffSession(cafeA, sessionA);
-      assert.equal(res.status, 200, "a version-less legacy token is accepted as version 1");
+    await t.test("tokens that name no stored session are refused", async () => {
+      // Correctly signed, but in the pre-session format without a session id: it can never match a
+      // row, so it must be refused rather than treated as an unpredictable "version 1".
+      const legacy = await staffSession(cafeA, mintToken(`cafe:${cafeA.cafeId}`));
+      assert.equal(legacy.status, 401, "a version-less legacy token is not a session");
 
       const wrongVersion = await staffSession(cafeA, mintToken(`cafe:${cafeA.cafeId}:99`));
       assert.equal(wrongVersion.status, 401, "a token for another version is rejected");
 
-      const otherCafe = await staffSession(cafeA, sessionB);
-      assert.equal(otherCafe.status, 401, "another cafe's token is rejected");
+      const otherCafe = await sessionWithCookie(cafeA, sessionB);
+      assert.equal(otherCafe.status, 401, "another cafe's session is rejected");
+
+      assert.equal((await sessionWithCookie(cafeB, sessionB)).status, 200, "cafe B's own session works");
     });
 
     await t.test("operator login returns a CSRF token", async () => {
@@ -246,8 +282,6 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
     });
 
     await t.test("every old session for the reset cafe fails immediately", async () => {
-      const res = await staffSession(cafeA, sessionA);
-      assert.equal(res.status, 401, "the pre-reset session is dead");
       const fresh = await staffSession(cafeA, mintToken(`cafe:${cafeA.cafeId}:1`));
       assert.equal(fresh.status, 401, "a token still on version 1 is dead");
     });
@@ -263,13 +297,14 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
         headers: prefix({ cookie: pair }),
       });
       assert.equal(session.status, 200, "the newly issued session works");
+      sessionAAfterFirstReset = pair;
 
-      const old = await staffLogin(cafeA, STAFF_LEGACY_PASSWORD);
+      const old = await staffLogin(cafeA, STAFF_PASSWORD);
       assert.equal(old.status, 401, "the previous password no longer signs in");
     });
 
     await t.test("other cafes are unaffected", async () => {
-      const res = await staffSession(cafeB, sessionB);
+      const res = await sessionWithCookie(cafeB, sessionB);
       assert.equal(res.status, 200, "cafe B's session still works");
       const state = await audit(cafeB.cafeId);
       assert.equal(Number(state.cafe.auth_version), 1, "cafe B keeps its version");
@@ -296,8 +331,9 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
       assert.equal(Number(state.cafe.auth_version), 3);
       assert.equal(state.resets.filter((row) => row.outcome === "success").length, 2);
 
-      const stale = await staffSession(cafeA, sessionA);
-      assert.equal(stale.status, 401, "the first reset's session is still dead");
+      // A real session from the previous reset — the strongest form of this check.
+      const stale = await sessionWithCookie(cafeA, sessionAAfterFirstReset);
+      assert.equal(stale.status, 401, "the session minted before this reset is dead");
     });
 
     await t.test("a failed attempt leaves nothing half-written", async () => {
@@ -318,15 +354,16 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
       );
     });
     await t.test("an owner password change signs out that cafe's other sessions", async () => {
-      const login = await staffLogin(cafeB, STAFF_LEGACY_PASSWORD);
-      assert.equal(login.status, 200, "cafe B starts on its legacy password");
+      const login = await staffLogin(cafeB, STAFF_PASSWORD);
+      assert.equal(login.status, 200, "cafe B starts on its own password");
       const cookies = typeof login.headers.getSetCookie === "function" ? login.headers.getSetCookie() : [];
       const pair = (cookies[0] || login.headers.get("set-cookie") || "").split(";")[0];
 
       const changed = await fetch(`${HARNESS}/api/cafes/${cafeB.slug}/admin/settings`, {
         method: "PATCH",
-        headers: prefix({ cookie: pair }),
-        body: JSON.stringify({ password: "a-brand-new-owner-pass" }),
+        headers: prefix({ cookie: pair, "x-csrf-token": await csrfToken(cafeB.slug, pair) }),
+        // F-19: the change must be re-authenticated with the current password.
+        body: JSON.stringify({ password: "a-brand-new-owner-pass", currentPassword: STAFF_PASSWORD }),
       });
       assert.equal(changed.status, 200, "the owner may set their own password");
 
@@ -346,7 +383,7 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
 
       const relogin = await staffLogin(cafeB, "a-brand-new-owner-pass");
       assert.equal(relogin.status, 200, "the new password works on a fresh sign-in");
-      const oldLogin = await staffLogin(cafeB, STAFF_LEGACY_PASSWORD);
+      const oldLogin = await staffLogin(cafeB, STAFF_PASSWORD);
       assert.equal(oldLogin.status, 401, "the old password no longer works");
 
       const state = await audit(cafeB.cafeId);
@@ -354,7 +391,7 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
       assert.ok(Number(state.cafe.password_changed_at) > 0, "the change is timestamped");
       assert.equal(state.resets.length, 0, "an owner change is not logged as an operator reset");
 
-      const otherCafe = await staffSession(cafeA, sessionA);
+      const otherCafe = await sessionWithCookie(cafeA, sessionAAfterFirstReset);
       assert.equal(otherCafe.status, 401, "cafe A stays on its own (already invalidated) version");
     });
 
@@ -368,7 +405,7 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
       for (const short of ["sixchr", "elevenchars"]) {
         const res = await fetch(`${HARNESS}/api/cafes/${cafeB.slug}/admin/settings`, {
           method: "PATCH",
-          headers: prefix({ cookie: pair }),
+          headers: prefix({ cookie: pair, "x-csrf-token": await csrfToken(cafeB.slug, pair) }),
           body: JSON.stringify({ password: short }),
         });
         assert.equal(res.status, 400, `a ${short.length}-character password is refused`);
@@ -387,8 +424,8 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
 
       const accepted = await fetch(`${HARNESS}/api/cafes/${cafeB.slug}/admin/settings`, {
         method: "PATCH",
-        headers: prefix({ cookie: pair }),
-        body: JSON.stringify({ password: "twelvechars!" }),
+        headers: prefix({ cookie: pair, "x-csrf-token": await csrfToken(cafeB.slug, pair) }),
+        body: JSON.stringify({ password: "twelvechars!", currentPassword: "a-brand-new-owner-pass" }),
       });
       assert.equal(accepted.status, 200, "exactly 12 characters is accepted");
       const state = await audit(cafeB.cafeId);
@@ -398,31 +435,29 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
     await t.test("an invalid stored version fails closed for tokens and sign-in", async () => {
       // café B's current password, set by the previous subtest.
       const CURRENT = "twelvechars!";
-      const legacy = mintToken(`cafe:${cafeB.cafeId}`); // a version-1 token, valid before corruption
-
       const realVersion = Number((await audit(cafeB.cafeId)).cafe.auth_version);
       assert.ok(realVersion >= 2, "café B is already past version 1 when this test starts");
 
-      // With a genuinely valid version of 1 the very same legacy token authenticates, which is what
-      // makes the rejections below about the stored value and not about the token.
+      // With a genuinely valid version of 1 a real sign-in is issued a version-1 session, and that
+      // session authenticates — which is what makes the rejections below about the stored value and
+      // not about the token.
       await setVersion(cafeB.cafeId, 1);
-      const validOne = await fetch(`${HARNESS}/api/cafes/${cafeB.slug}/admin/session`, {
-        headers: prefix({ cookie: staffCookie(cafeB, legacy).cookie }),
-      });
-      assert.equal(validOne.status, 200, "a stored version of 1 accepts a version-1 token");
+      const v1 = await staffLogin(cafeB, CURRENT);
+      assert.equal(v1.status, 200, "version 1 is a valid stored value to sign in against");
+      const v1Cookie = cookieFrom(v1);
+      const validOne = await sessionWithCookie(cafeB, v1Cookie);
+      assert.equal(validOne.status, 200, "a stored version of 1 accepts a real version-1 session");
 
       const op = await operatorSignIn();
 
       for (const value of [0, -1, 1.5, "abc"]) {
         await setVersion(cafeB.cafeId, value);
 
-        const session = await fetch(`${HARNESS}/api/cafes/${cafeB.slug}/admin/session`, {
-          headers: prefix({ cookie: staffCookie(cafeB, legacy).cookie }),
-        });
+        const session = await sessionWithCookie(cafeB, v1Cookie);
         assert.equal(
           session.status,
           401,
-          `stored version ${JSON.stringify(value)} must not accept a version-1 token`
+          `stored version ${JSON.stringify(value)} must not accept a version-1 session`
         );
 
         const login = await staffLogin(cafeB, CURRENT);
@@ -440,16 +475,22 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
         );
       }
 
-      // Restoring the café's real version brings it back, with the token that matches it.
+      // Restoring the café's real version brings it back, with a session signed in against it. The
+      // version-1 session stays refused, because its stored row is exactly what makes it a session.
       await setVersion(cafeB.cafeId, realVersion);
-      const restored = await fetch(`${HARNESS}/api/cafes/${cafeB.slug}/admin/session`, {
-        headers: prefix({ cookie: staffCookie(cafeB, mintToken(`cafe:${cafeB.cafeId}:${realVersion}`)).cookie }),
-      });
-      assert.equal(restored.status, 200, "a valid version authenticates again");
-      const stillLegacy = await fetch(`${HARNESS}/api/cafes/${cafeB.slug}/admin/session`, {
-        headers: prefix({ cookie: staffCookie(cafeB, legacy).cookie }),
-      });
-      assert.equal(stillLegacy.status, 401, "and the version-1 token is still refused");
+      const restoredCookie = await realSession(cafeB, CURRENT);
+      assert.equal(
+        (await sessionWithCookie(cafeB, restoredCookie)).status,
+        200,
+        "a valid version authenticates again"
+      );
+      assert.equal(
+        (await sessionWithCookie(cafeB, v1Cookie)).status,
+        401,
+        "and the version-1 session is still refused"
+      );
+      const stillLegacy = await staffSession(cafeB, mintToken(`cafe:${cafeB.cafeId}:${realVersion}`));
+      assert.equal(stillLegacy.status, 401, "a correctly signed legacy token is refused at any version");
     });
 
     await t.test("two operator logins never receive the same session token", async () => {
@@ -467,7 +508,7 @@ test("reset owner password: end-to-end behaviour", { skip }, async (t) => {
       const create = (password, slug) =>
         fetch(`${HARNESS}/api/operator/cafes`, {
           method: "POST",
-          headers: prefix({ cookie: op.cookie }),
+          headers: prefix({ cookie: op.cookie, "x-csrf-token": op.csrfToken }),
           body: JSON.stringify({ name: "Policy Cafe", slug, password, serviceMode: "counter" }),
         });
 

@@ -1,6 +1,11 @@
 node_modules/
 dist/
 .wrangler/
+.local-pilot/
+# Disposable MFA browser-test environment (config, test-only credentials, database).
+.mfa-test/
+# Disposable state for the automated MFA acceptance suite.
+.mfa-suite/
 .tools/
 sites-build/
 .admin-secret.txt

@@ -1,6 +1,6 @@
 import { ensureDb } from "./db.js";
 import { handleApi } from "./api.js";
-import { json } from "./http.js";
+import { json, withSecurityHeaders } from "./http.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -9,13 +9,13 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       try {
         await ensureDb(env);
-        return await handleApi(request, env, url, ctx);
+        return withSecurityHeaders(await handleApi(request, env, url, ctx));
       } catch (err) {
         console.error("API error", err && err.stack ? err.stack : err);
-        return json({ error: "Something went wrong. Please try again." }, 500);
+        return withSecurityHeaders(json({ error: "Something went wrong. Please try again." }, 500));
       }
     }
 
-    return env.ASSETS.fetch(request);
+    return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
 };

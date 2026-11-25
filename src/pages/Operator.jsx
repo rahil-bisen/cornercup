@@ -53,6 +53,20 @@ export default function Operator() {
     setSession("out");
   };
 
+  const signOutEverywhere = async () => {
+    const confirmed = window.confirm(
+      "Sign out everywhere?\n\nEvery device signed into the operator console will be signed out. This screen stays signed in."
+    );
+    if (!confirmed) return;
+    try {
+      await api("/api/operator/logout-all", { method: "POST", headers: { "x-csrf-token": csrfToken } });
+      const payload = await api("/api/operator/session");
+      setCsrfToken(payload && payload.csrfToken ? payload.csrfToken : "");
+    } catch (err) {
+      window.alert(err && err.message ? err.message : "We couldn't sign the other devices out.");
+    }
+  };
+
   if (session === "checking") {
     return (
       <main className="login-wrap">
@@ -81,7 +95,7 @@ export default function Operator() {
               autoFocus
             />
           </label>
-          {error && <p className="alert">{error}</p>}
+          {error && <p className="alert" role="alert">{error}</p>}
           <button type="submit" className="btn primary" disabled={busy || password.length === 0}>
             {busy ? "Checking…" : "Sign in"}
           </button>
@@ -93,10 +107,10 @@ export default function Operator() {
     );
   }
 
-  return <OperatorShell onSignOut={signOut} csrfToken={csrfToken} onCsrfToken={setCsrfToken} />;
+  return <OperatorShell onSignOut={signOut} onSignOutEverywhere={signOutEverywhere} csrfToken={csrfToken} onCsrfToken={setCsrfToken} />;
 }
 
-function OperatorShell({ onSignOut, csrfToken, onCsrfToken }) {
+function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken }) {
   const [cafes, setCafes] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -137,6 +151,7 @@ function OperatorShell({ onSignOut, csrfToken, onCsrfToken }) {
     try {
       const payload = await api("/api/operator/cafes", {
         method: "POST",
+        headers: { "x-csrf-token": csrfToken },
         body: JSON.stringify({
           name: form.name,
           slug: form.slug || undefined,
@@ -215,6 +230,9 @@ function OperatorShell({ onSignOut, csrfToken, onCsrfToken }) {
           <button type="button" className="btn ghost small-btn" onClick={onSignOut}>
             Sign out
           </button>
+          <button type="button" className="btn ghost small-btn" onClick={onSignOutEverywhere}>
+            Sign out everywhere
+          </button>
         </div>
       </header>
 
@@ -225,7 +243,7 @@ function OperatorShell({ onSignOut, csrfToken, onCsrfToken }) {
             <p className="muted small">Each café has its own menu, orders and owner password</p>
           </div>
 
-          {error && <p className="alert">{error}</p>}
+          {error && <p className="alert" role="alert">{error}</p>}
           {notice && <p className="muted small">{notice}</p>}
           {!cafes && <p className="muted">Loading cafés…</p>}
 

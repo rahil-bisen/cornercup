@@ -104,10 +104,11 @@ export function orderInsertStatement(env, p) {
   if (p.counter) {
     return env.DB.prepare(
       "INSERT INTO orders (id, cafe_id, table_id, table_label, note, status, total_cents, " +
-        "payment_method, payment_status, queue_no, idempotency_key, fingerprint, created_at, updated_at) " +
+        "payment_method, payment_status, queue_no, idempotency_key, fingerprint, track_nonce, " +
+        "track_hash, created_at, updated_at) " +
         "SELECT ?, ?, 0, 'Counter', ?, 'new', ?, ?, 'unpaid', " +
         "(SELECT COALESCE(MAX(queue_no), 0) + 1 FROM orders " +
-        "WHERE cafe_id = ? AND queue_no IS NOT NULL AND created_at >= ?), ?, ?, ?, ?" +
+        "WHERE cafe_id = ? AND queue_no IS NOT NULL AND created_at >= ?), ?, ?, ?, ?, ?, ?" +
         guard
     ).bind(
       p.id,
@@ -119,6 +120,8 @@ export function orderInsertStatement(env, p) {
       p.dayStart,
       p.key,
       p.fingerprint,
+      p.trackNonce == null ? null : p.trackNonce,
+      p.trackHash == null ? null : p.trackHash,
       p.now,
       p.now,
       p.cafeId,
@@ -130,8 +133,9 @@ export function orderInsertStatement(env, p) {
 
   return env.DB.prepare(
     "INSERT INTO orders (id, cafe_id, table_id, table_label, note, status, total_cents, " +
-      "payment_method, payment_status, queue_no, idempotency_key, fingerprint, created_at, updated_at) " +
-      "SELECT ?, ?, ?, ?, ?, 'new', ?, ?, 'unpaid', NULL, ?, ?, ?, ?" +
+      "payment_method, payment_status, queue_no, idempotency_key, fingerprint, track_nonce, " +
+      "track_hash, created_at, updated_at) " +
+      "SELECT ?, ?, ?, ?, ?, 'new', ?, ?, 'unpaid', NULL, ?, ?, ?, ?, ?, ?" +
       guard
   ).bind(
     p.id,
@@ -143,6 +147,8 @@ export function orderInsertStatement(env, p) {
     p.paymentMethod,
     p.key,
     p.fingerprint,
+    p.trackNonce == null ? null : p.trackNonce,
+    p.trackHash == null ? null : p.trackHash,
     p.now,
     p.now,
     p.cafeId,
@@ -220,4 +226,45 @@ export function abandonClaimStatement(env, { cafeId, key, fingerprint, now }) {
     "UPDATE checkout_claims SET state = 'abandoned', updated_at = ? " +
       "WHERE cafe_id = ? AND idempotency_key = ? AND state = 'claimed' AND fingerprint = ?"
   ).bind(now, cafeId, key, fingerprint);
+}
+
+// A staff payment-status change, split into the SET fragments it always uses so the handler and the
+// test harness apply exactly the same statement. `guardPaid` is true for the values that assert the
+// ticket is not paid: "unpaid", "submitted" and "failed" must never undo a confirmed payment.
+// "counter" and "confirmed" both mean money was taken, so they stay unguarded — correcting the rail is
+// not a downgrade.
+export function paymentStatusSets(paymentStatus, now) {
+  if (paymentStatus === "counter") {
+    return {
+      sets: ["payment_status = ?", "payment_method = 'counter'", "paid_at = ?"],
+      params: [paymentStatus, now],
+      guardPaid: false,
+    };
+  }
+  if (paymentStatus === "confirmed") {
+    return { sets: ["payment_status = ?", "paid_at = ?"], params: [paymentStatus, now], guardPaid: false };
+  }
+  return { sets: ["payment_status = ?", "paid_at = NULL"], params: [paymentStatus], guardPaid: true };
+}
+
+// The staff order update as one statement. When the new payment status would un-pay a ticket, the
+// guard is part of the WHERE clause, so a payment confirmed between the request's read and this write
+// cannot be overwritten: zero changed rows means "already paid", never "try again".
+export function staffOrderUpdateStatement(env, { cafeId, orderId, sets, params, guardPaid }) {
+  const guard = guardPaid ? " AND payment_status != 'confirmed'" : "";
+  return env.DB.prepare(`UPDATE orders SET ${sets.join(", ")} WHERE id = ? AND cafe_id = ?${guard}`).bind(
+    ...params,
+    orderId,
+    cafeId
+  );
+}
+
+// The guest's pay-at-counter choice, as one guarded statement. `payment_status != 'confirmed'` is
+// evaluated inside the write, not by a read before it, so a payment the gateway or staff confirmed
+// concurrently is never replaced. Zero changed rows is therefore "already paid", never "retry".
+export function counterPaymentStatement(env, { cafeId, orderId, now }) {
+  return env.DB.prepare(
+    "UPDATE orders SET payment_method = 'counter', payment_status = 'counter', updated_at = ? " +
+      "WHERE id = ? AND cafe_id = ? AND payment_status != 'confirmed'"
+  ).bind(now, orderId, cafeId);
 }

@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "corner-cup-batch-harness",
+  "main": "worker.mjs",
+  "compatibility_date": "2025-11-01",
+  "vars": {
+    // Guest tracking needs a key, and this harness deliberately has no ADMIN_SECRET so the
+    // "sign-in is 503 without one" test still has a deployment to point at. Test-only value.
+    "ORDER_TRACK_SECRET": "test-order-track-secret-for-harness-only",
+    // Test-only: make expired-row cleanup deterministic for the F-06 cleanup tests.
+    "RATE_LIMIT_CLEANUP_PROBABILITY": "1"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

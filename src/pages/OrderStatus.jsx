@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { api, cafePath } from "../lib/api.js";
 import { clockTime, money } from "../lib/money.js";
 import PaymentPanel from "../components/PaymentPanel.jsx";
+
+// A guest watching their ticket polls less often than staff need to: fifteen seconds is well inside
+// the time it takes to make a coffee, and each poll is a read the limiter answers without a D1
+// write. Hidden pages stop polling entirely.
+const ORDER_POLL_MS = 15 * 1000;
 
 // Pickup orders are collected, table orders are delivered, so the wording follows the order kind.
 function stepsFor(pickup) {
@@ -27,6 +32,17 @@ function menuPath(order) {
   return cafePath(order && order.tableId ? `/t/${order.tableId}` : "");
 }
 
+// The heading has to describe the ticket as it is now: "Order confirmed" is only true while the order is
+// still new, and a served or cancelled order that still claims to be confirmed is simply wrong. The
+// wording follows the collection style too — a pickup order is collected, a table order is served.
+function headingFor(order, pickup) {
+  if (order.status === "cancelled") return "Order cancelled";
+  if (order.status === "preparing") return "Being made";
+  if (order.status === "ready") return pickup ? "Ready to collect" : "Your order is ready";
+  if (order.status === "served") return pickup ? "Collected" : "Served";
+  return "Order confirmed";
+}
+
 function paymentSummary(order) {
   if (order.paymentStatus === "confirmed") return { label: "Paid", tone: "paid" };
   if (order.paymentStatus === "counter" || order.paymentMethod === "counter") {
@@ -37,16 +53,29 @@ function paymentSummary(order) {
 
 export default function OrderStatus() {
   const { tableId, orderId } = useParams();
+  const location = useLocation();
   const [order, setOrder] = useState(null);
   const [error, setError] = useState("");
 
+  // The token travels in the fragment, so it never reaches a server log. It is what proves this browser
+  // placed the order: the id alone is not a credential, and without one this page asks for staff help
+  // rather than polling an endpoint that would only ever answer 404.
+  const trackToken = useMemo(() => {
+    const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+    return params.get("t") || "";
+  }, [location.hash]);
+
   const fetchOrder = useCallback(async () => {
-    const payload = await api(`/api/orders/${encodeURIComponent(orderId)}`);
+    if (!trackToken) throw new Error("This link is missing its tracking code. Scan the QR code again or ask our staff.");
+    const payload = await api(`/api/orders/${encodeURIComponent(orderId)}`, {
+      headers: { "x-order-token": trackToken },
+    });
     return payload.order;
-  }, [orderId]);
+  }, [orderId, trackToken]);
 
   useEffect(() => {
     let cancelled = false;
+    if (!trackToken) return undefined;
 
     const run = () => {
       fetchOrder()
@@ -62,12 +91,32 @@ export default function OrderStatus() {
     };
 
     run();
-    const timer = setInterval(run, 4000);
+    let timer = null;
+    const start = () => {
+      if (timer === null) timer = setInterval(run, ORDER_POLL_MS);
+    };
+    const stop = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        run();
+        start();
+      } else {
+        stop();
+      }
+    };
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [fetchOrder]);
+  }, [fetchOrder, trackToken]);
 
   const refresh = () => {
     fetchOrder()
@@ -75,7 +124,9 @@ export default function OrderStatus() {
       .catch(() => {});
   };
 
-  if (error) {
+  // A link with no fragment cannot prove anything, and there is no request worth sending. Show the same
+  // card rather than waiting forever on a reply that will never come.
+  if (error || !trackToken) {
     return (
       <main className="page-narrow">
         <div className="state-card">
@@ -83,7 +134,9 @@ export default function OrderStatus() {
             🧾
           </span>
           <h1>Order not found</h1>
-          <p className="muted">{error}</p>
+          <p className="muted">
+            {error || "This link is missing its tracking code. Scan the QR code again, or ask our staff."}
+          </p>
           <Link className="btn primary" to={cafePath(tableId ? `/t/${tableId}` : "")}>
             Back to the menu
           </Link>
@@ -94,10 +147,24 @@ export default function OrderStatus() {
 
   if (!order) {
     return (
-      <main className="page-narrow">
-        <div className="state-card">
-          <p className="muted">Finding your order…</p>
+      <main className="page-narrow status-page" aria-busy="true">
+        <div className="status-skeleton" aria-hidden="true">
+          <div className="skeleton-line w-30" />
+          <div className="skeleton-line w-60" />
+          <div className="skeleton-line w-90" />
         </div>
+        <div className="timeline timeline-skeleton" aria-hidden="true">
+          {[0, 1, 2, 3].map((row) => (
+            <div key={row} className="timeline-step">
+              <span className="timeline-dot skeleton" />
+              <div className="skeleton-lines">
+                <div className="skeleton-line w-60" />
+                <div className="skeleton-line w-90" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="muted small center">Finding your order…</p>
       </main>
     );
   }
@@ -105,6 +172,7 @@ export default function OrderStatus() {
   const cancelled = order.status === "cancelled";
   const pickup = !order.tableId;
   const steps = stepsFor(pickup);
+  const heading = headingFor(order, pickup);
   const currentIndex = Math.max(
     0,
     steps.findIndex((step) => step.key === order.status)
@@ -116,8 +184,11 @@ export default function OrderStatus() {
   return (
     <main className="page-narrow status-page">
       <header className="receipt-head">
-        <p className="eyebrow">{pickup ? `Pickup #${order.queueNo}` : order.tableLabel}</p>
-        <h1>{cancelled ? "Order cancelled" : "Order confirmed"}</h1>
+        {/* The queue number (or the table) is the one thing a guest reads across a room, so it is the
+            largest text on the page — not a 10px eyebrow above a generic heading. */}
+        <p className="eyebrow">{pickup ? "Pickup number" : "Table"}</p>
+        <p className="queue-number">{pickup ? order.queueNo : order.tableLabel}</p>
+        <h1>{heading}</h1>
         <p className="muted">
           Order <strong>#{order.id}</strong> · placed {clockTime(order.createdAt)}
         </p>
@@ -132,7 +203,7 @@ export default function OrderStatus() {
         </div>
       ) : (
         <>
-          {needsPayment && <PaymentPanel order={order} onUpdated={refresh} />}
+          {needsPayment && <PaymentPanel order={order} onUpdated={refresh} trackToken={trackToken} />}
 
           {!needsPayment && (
             <p className={`pay-status ${payment.tone}`}>
@@ -187,11 +258,15 @@ export default function OrderStatus() {
           <strong>{money(order.totalCents)}</strong>
         </div>
         <p className="muted small center">
-          {order.paymentStatus === "confirmed" && "Payment received — thank you!"}
-          {order.paymentStatus !== "confirmed" &&
-            (order.paymentStatus === "counter" || order.paymentMethod === "counter"
-              ? "Pay at the counter — card, cash or UPI."
-              : "Pay above to settle this order.")}
+          {/* A cancelled order owes nothing, so it never carries a payment instruction. The total above
+              stays as the record of what was ordered; only the reassurance line changes. */}
+          {cancelled
+            ? "This order was cancelled — nothing to pay."
+            : order.paymentStatus === "confirmed"
+              ? "Payment received — thank you!"
+              : order.paymentStatus === "counter" || order.paymentMethod === "counter"
+                ? "Pay at the counter — card, cash or UPI."
+                : "Pay above to settle this order."}
         </p>
       </section>
 

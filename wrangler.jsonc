@@ -3,16 +3,31 @@
   "name": "corner-cup",
   "main": "worker/index.js",
   "compatibility_date": "2025-11-01",
+  // Argon2id ships two small pre-compiled modules. workerd never compiles wasm from bytes, so the
+  // binaries are imported statically and instantiated with the application's own memory.
+  "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "corner-cup",
       "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  // Menu photographs. `wrangler dev` simulates this bucket locally, so the upload path can be
+  // exercised without an account. A deploy requires the bucket to exist:
+  //   wrangler r2 bucket create corner-cup-images
+  // Until it does, `wrangler deploy` fails on the missing bucket rather than shipping a Worker whose
+  // photo uploads answer 503, and the menu keeps its category defaults either way.
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "corner-cup-images"
     }
   ],
   "vars": {

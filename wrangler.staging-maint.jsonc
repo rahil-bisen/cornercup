@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Rollback configuration for the staging Worker. This is the exact maintenance-only shape that
+  // served staging before the application was configured: same Worker name, same staging D1 binding,
+  // a maintenance stub that answers 503 on every route, and no assets or wasm rules of its own.
+  //
+  // Rollback deployment (only with separate approval):
+  //   npx wrangler deploy --config wrangler.staging-maint.jsonc
+  "name": "corner-cup-staging",
+  "main": ".staging-maint/index.js",
+  "compatibility_date": "2025-11-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup-staging",
+      "database_id": "39a7899c-0130-4536-9570-f07b6c29b2d4"
+    }
+  ],
+  "vars": {
+    "CAFE_NAME": "Corner Cup Staging",
+    "SERVICE_MODE": "counter",
+    "CAFE_TZ_OFFSET_MIN": "330"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

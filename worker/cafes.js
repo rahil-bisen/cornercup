@@ -1,55 +1,15 @@
 import { seedMenu, seedTables, slugify } from "./db.js";
+// Hashing is imported (and re-exported) so the database bootstrap can share one implementation
+// without either module importing the other.
+import {
+  hashPassword,
+  verifyPassword,
+  isArgon2Hash,
+  passwordNeedsReset,
+  PasswordQueueFullError,
+} from "./passwords.js";
 
-const PBKDF2_ITERATIONS = 100_000;
-
-function fromBase64(value) {
-  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
-}
-
-async function derive(password, salt, iterations) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: fromBase64(salt), iterations, hash: "SHA-256" },
-    key,
-    256
-  );
-  let binary = "";
-  for (const byte of new Uint8Array(bits)) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-// Each café keeps its own owner password. Hashing it means a database dump does not hand over
-// every client's staff board.
-export async function hashPassword(password) {
-  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-  let salt = "";
-  for (const byte of saltBytes) salt += String.fromCharCode(byte);
-  salt = btoa(salt);
-  const hash = await derive(password, salt, PBKDF2_ITERATIONS);
-  return `pbkdf2$${PBKDF2_ITERATIONS}$${salt}$${hash}`;
-}
-
-export async function verifyPassword(password, stored) {
-  if (!stored) return false;
-  const [scheme, iterationsRaw, salt, hash] = String(stored).split("$");
-  if (scheme !== "pbkdf2" || !salt || !hash) return false;
-
-  const iterations = Number(iterationsRaw);
-  if (!Number.isFinite(iterations) || iterations < 1000) return false;
-
-  const candidate = await derive(password, salt, iterations);
-  if (candidate.length !== hash.length) return false;
-
-  let mismatch = 0;
-  for (let i = 0; i < candidate.length; i += 1) mismatch |= candidate.charCodeAt(i) ^ hash.charCodeAt(i);
-  return mismatch === 0;
-}
+export { hashPassword, verifyPassword, isArgon2Hash, passwordNeedsReset, PasswordQueueFullError };
 
 export function cafeSettings(cafe) {
   return {

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, cafePath, cafeSlug } from "../lib/api.js";
-import { cafeName, useSiteConfig } from "../lib/config.js";
+import { cafeName, useSiteConfigState } from "../lib/config.js";
+import { isCurrentScope, menuScope } from "../lib/menuScope.js";
+import { resolveItemImage } from "../lib/menuImages.js";
 import { money } from "../lib/money.js";
+import { checkoutPaymentMethod, gatewayEnabled } from "../lib/payments.js";
 import CartSheet from "../components/CartSheet.jsx";
 import {
   abandonPendingCheckout,
@@ -18,51 +21,139 @@ export default function Menu() {
   const [search] = useSearchParams();
   const navigate = useNavigate();
   const queryTable = search.get("table");
+  const linkTable = routeTable || queryTable;
+  const cafeKey = cafeSlug() || "cafe";
+  // Tables are remembered per café: two outlets sharing a browser must never borrow each other's table.
+  const tableStorageKey = `cafe_table:${cafeKey}`;
   // The QR code carries the table in the path; ?table=N is accepted too. Either way it is kept for
   // the session, so a refresh or a detour to a policy page doesn't lose the table before checkout.
-  const [tableId, setTableId] = useState(
-    () => routeTable || queryTable || (typeof window === "undefined" ? "" : sessionStorage.getItem("cafe_table")) || ""
-  );
-  const [tables, setTables] = useState([]);
-  const [data, setData] = useState(null);
+  // Only the URL is trusted up front — a remembered table is restored after the service mode is known.
+  const [tableId, setTableId] = useState(() => (linkTable ? String(linkTable) : ""));
+  // A menu or table list is tagged with what it was fetched for, so one café's answer can never be
+  // rendered under another café's header — not even in the frame before the new request lands.
+  const [menuState, setMenuState] = useState({ scope: null, data: null });
+  const [tablesState, setTablesState] = useState({ scope: null, rows: [] });
   const [error, setError] = useState("");
+  // Each failed resource gets its own message and its own retry counter, so a retry re-runs exactly one
+  // request. Neither counter is ever bumped on a timer: only the guest's click moves them.
+  const [tablesError, setTablesError] = useState("");
+  const [tablesAttempt, setTablesAttempt] = useState(0);
+  const [menuAttempt, setMenuAttempt] = useState(0);
   // The basket key follows the table, or "takeaway" for a counter-service café, so the two flows
   // can share a browser without mixing their carts.
-  const cartKey = `cart:${cafeSlug() || "cafe"}:${tableId ? `table-${tableId}` : "takeaway"}`;
-  const [cart, setCart] = useState(() => readCart(cartKey));
+  const cartKey = `cart:${cafeKey}:${tableId ? `table-${tableId}` : "takeaway"}`;
+  // Every key keeps its own basket, and writes go back to the key they were read from, so a table or
+  // café change can neither copy one basket into another nor clear the one left behind.
+  const [carts, setCarts] = useState(() => ({ [cartKey]: readCart(cartKey) }));
+  const cart = carts[cartKey] !== undefined ? carts[cartKey] : readCart(cartKey);
+  const setCart = (update) =>
+    setCarts((current) => {
+      const base = current[cartKey] !== undefined ? current[cartKey] : readCart(cartKey);
+      return { ...current, [cartKey]: typeof update === "function" ? update(base) : update };
+    });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [note, setNote] = useState("");
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState("");
   const [resolvedOrder, setResolvedOrder] = useState(null);
-  const config = useSiteConfig();
+  const [brokenImages, setBrokenImages] = useState(() => new Set());
+  const markImageBroken = (src) => {
+    if (!src) return;
+    setBrokenImages((prev) => {
+      if (prev.has(src)) return prev;
+      const next = new Set(prev);
+      next.add(src);
+      return next;
+    });
+  };
+  const resolveMenuImage = (item, category) => resolveItemImage(item, category, brokenImages);
+
+  // The tracking token rides in the URL fragment: it is never sent to the server in a request line,
+  // never reaches an access log, and browsers strip it from any Referer.
+  function orderLink(order, token, table) {
+    const path = cafePath(table ? `/t/${table}/order/${order.id}` : `/order/${order.id}`);
+    return token ? `${path}#t=${encodeURIComponent(token)}` : path;
+  }
+  const { config, error: configError, retry: retryConfig } = useSiteConfigState();
   const cafe = cafeName(config);
   // Set by the café (SERVICE_MODE=counter): no table to scan, the guest gets a pickup number instead.
   const counterService = Boolean(config && config.service && config.service.mode === "counter");
+  // In-app navigation to another café must not carry the previous café's table along. This is adjusted
+  // during render rather than in an effect on purpose: an effect runs after the commit, which leaves one
+  // render in which the new café is asked for the previous café's table — and the server answers an
+  // unknown table with a 404, so the guest would see "we couldn't find that table" flash before the real
+  // menu arrived. React re-runs the render before committing, so no request is ever made for that pass.
+  const [tableCafe, setTableCafe] = useState(cafeKey);
+  // Which section the guest is looking at, so the category rail can say where they are. It is only
+  // ever moved by scrolling or by tapping a chip — never by a timer — and it resets with the café.
+  const [activeCategory, setActiveCategory] = useState("");
+  if (tableCafe !== cafeKey) {
+    setTableCafe(cafeKey);
+    setTableId(linkTable ? String(linkTable) : "");
+    setTablesError("");
+    setError("");
+    setActiveCategory("");
+  }
 
-  useEffect(() => {
-    const fromLink = routeTable || queryTable;
-    if (!fromLink) return;
-    setTableId(String(fromLink));
-    sessionStorage.setItem("cafe_table", String(fromLink));
-  }, [routeTable, queryTable]);
+  // Everything a menu request depends on, as one value. It is the effect's dependency, so changing
+  // café refetches even when the table number and the service mode stay identical.
+  const menuScopeKey = menuScope({ cafeKey, tableId, counterService });
+  const data = isCurrentScope(menuState.scope, menuScopeKey) ? menuState.data : null;
+  const tables = isCurrentScope(tablesState.scope, cafeKey) ? tablesState.rows : [];
 
-  // Only needed when the guest arrived without a table, so the picker has something to show.
+  // A table in the URL is the guest's explicit choice, so it beats anything remembered, and it is
+  // remembered for this café only. A counter café has no tables, so it stores nothing.
   useEffect(() => {
+    if (!linkTable) return;
+    setTableId(String(linkTable));
+    if (!counterService) sessionStorage.setItem(tableStorageKey, String(linkTable));
+  }, [linkTable, counterService, tableStorageKey]);
+
+  // The remembered table is restored only once the café's service mode is known: restoring it before
+  // that is how a table from one café could hijack another café's menu.
+  useEffect(() => {
+    if (!config) return;
+    if (counterService) {
+      sessionStorage.removeItem(tableStorageKey);
+      setTableId(linkTable ? String(linkTable) : "");
+      return;
+    }
+    if (linkTable) return;
+    const stored = sessionStorage.getItem(tableStorageKey);
+    if (stored) setTableId((current) => current || stored);
+  }, [config, counterService, linkTable, tableStorageKey]);
+
+  // Keys written by older builds are unscoped, so there is no telling which café they belong to.
+  // They are dropped instead of trusted, or one café's table would follow a guest into the next.
+  useEffect(() => {
+    sessionStorage.removeItem("cafe_table");
+  }, []);
+
+  // Only needed when the guest arrived without a table, so the picker has something to show. It waits
+  // for the café's settings to settle first: until the service mode is known, a counter café would be
+  // asked for a table list it does not have, and that answer could only ever be thrown away. Waiting
+  // costs nothing visible, because the picker itself cannot be rendered before the mode is known.
+  useEffect(() => {
+    if (!config && !configError) return undefined;
     if (tableId || counterService) return undefined;
     let alive = true;
+    setTablesError("");
     api("/api/tables")
       .then((payload) => {
-        if (alive) setTables(payload.tables || []);
+        if (alive) setTablesState({ scope: cafeKey, rows: payload.tables || [] });
       })
-      .catch(() => {});
+      .catch((err) => {
+        // A list that never arrives must not keep posing as "still loading", and a request we dropped
+        // ourselves is not a failure worth showing.
+        if (alive && !(err && err.canceled)) setTablesError(err.message);
+      });
     return () => {
       alive = false;
     };
-  }, [tableId, counterService]);
+  }, [tableId, counterService, cafeKey, tablesAttempt, config, configError]);
 
   const pickTable = (id) => {
-    sessionStorage.setItem("cafe_table", String(id));
+    if (!counterService) sessionStorage.setItem(tableStorageKey, String(id));
     setTableId(String(id));
     navigate(cafePath(`/t/${id}`));
   };
@@ -73,19 +164,61 @@ export default function Menu() {
     setError("");
     api(tableId ? `/api/menu?table=${encodeURIComponent(tableId)}` : "/api/menu")
       .then((payload) => {
-        if (alive) setData(payload);
+        if (alive) setMenuState({ scope: menuScopeKey, data: payload });
       })
       .catch((err) => {
-        if (alive) setError(err.message);
+        if (alive && !(err && err.canceled)) setError(err.message);
       });
     return () => {
       alive = false;
     };
-  }, [tableId, counterService]);
+  }, [menuScopeKey, menuAttempt]);
+
+  // Scroll-spy for the category rail. A section is "current" when its top has passed just under the
+  // sticky rail, which is what the guest's eye uses too. A plain scroll listener is deliberate: it works
+  // on the first paint and everywhere IntersectionObserver is missing, and it is throttled to one
+  // measurement per animation frame.
+  useEffect(() => {
+    if (!data) return undefined;
+    let timer = 0;
+    const measure = () => {
+      const rail = document.querySelector(".category-nav");
+      const offset = (rail ? rail.getBoundingClientRect().height : 55) + 28;
+      let current = data.categories.length ? data.categories[0].name : "";
+      data.categories.forEach((category) => {
+        const section = document.getElementById(sectionId(category.name));
+        if (section && section.getBoundingClientRect().top <= offset) current = category.name;
+      });
+      // The last section can be too short to ever reach the line above the rail, so at the end of the
+      // page it wins regardless — otherwise the rail would claim a section the guest has scrolled past.
+      const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+      if (atEnd && data.categories.length) current = data.categories[data.categories.length - 1].name;
+      setActiveCategory((previous) => (previous === current ? previous : current));
+    };
+    // A timer rather than requestAnimationFrame: frames stop being produced while a tab is hidden or
+    // occluded, which used to leave the flag set and every later scroll unmeasured. A timer still runs,
+    // and 80ms of coalescing is coarser than a frame and far cheaper than measuring every event.
+    const request = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = 0;
+        measure();
+      }, 80);
+    };
+    measure();
+    window.addEventListener("scroll", request, { passive: true });
+    window.addEventListener("resize", request);
+    return () => {
+      window.removeEventListener("scroll", request);
+      window.removeEventListener("resize", request);
+      if (timer) clearTimeout(timer);
+    };
+  }, [data]);
 
   useEffect(() => {
-    localStorage.setItem(cartKey, JSON.stringify(cart));
-  }, [cart, cartKey]);
+    if (carts[cartKey] === undefined) return;
+    localStorage.setItem(cartKey, JSON.stringify(carts[cartKey]));
+  }, [carts, cartKey]);
 
   useEffect(() => {
     document.body.classList.toggle("sheet-open", sheetOpen);
@@ -124,10 +257,14 @@ export default function Menu() {
   // Scoped like the cart, so two tables sharing one browser never share a checkout key.
   const checkoutKey = checkoutStorageKey(cafeSlug(), tableId);
 
+  // The café's own config decides the rail: online only when this deployment reports a live gateway,
+  // otherwise pay-at-counter. Never a hardcoded default — see src/lib/payments.js.
+  const payOnline = gatewayEnabled(config);
+
   const buildCheckoutPayload = () => ({
     ...(tableId ? { tableId: Number(tableId) } : {}),
     note,
-    paymentMethod: "razorpay",
+    paymentMethod: checkoutPaymentMethod(config),
     items: lines.map((line) => ({ itemId: line.item.id, qty: line.qty })).sort((a, b) => a.itemId - b.itemId),
   });
 
@@ -162,7 +299,9 @@ export default function Menu() {
         const settled = await abandonPendingCheckout(checkoutKey, api);
 
         if (settled.state === "committed") {
-          setResolvedOrder(settled.order || null);
+          setResolvedOrder(
+            settled.order ? { ...settled.order, trackToken: settled.trackToken || null } : null
+          );
           return;
         }
         if (settled.state === "unverified") {
@@ -187,7 +326,7 @@ export default function Menu() {
       setCart({});
       setNote("");
       setSheetOpen(false);
-      navigate(cafePath(tableId ? `/t/${tableId}/order/${payload.order.id}` : `/order/${payload.order.id}`));
+      navigate(orderLink(payload.order, payload.trackToken, tableId));
     } catch (err) {
       // A key the server has tied to another payload can never be ours again.
       if (err && (err.code === "idempotency_key_reused" || err.code === "checkout_abandoned")) {
@@ -198,6 +337,44 @@ export default function Menu() {
       setPlacing(false);
     }
   };
+
+  // Everything that can stop the menu rendering is resolved into one failure with one retry. The café
+  // itself comes first: until /api/config answers there is nothing to show a table picker for, and two
+  // banners (tables + config) used to stack in the same card with two identical retries.
+  const cafeFailed = Boolean(configError && !config);
+  const failure = cafeFailed
+    ? {
+        title: "We couldn't open this menu",
+        message: configError.message,
+        retry: () => {
+          retryConfig();
+          setTablesAttempt((n) => n + 1);
+          setMenuAttempt((n) => n + 1);
+        },
+      }
+    : error
+      ? { title: "Hmm, that link didn't work", message: error, retry: () => setMenuAttempt((n) => n + 1) }
+      : null;
+
+  if (failure) {
+    return (
+      <main className="page-narrow">
+        <div className="state-card">
+          <span className="state-emoji" aria-hidden="true">
+            🫥
+          </span>
+          <h1>{failure.title}</h1>
+          <p className="muted">{failure.message}</p>
+          <button type="button" className="btn primary" onClick={failure.retry}>
+            Try again
+          </button>
+          <Link className="btn ghost" to={cafePath("")}>
+            Back to the start
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   if (!tableId && !counterService) {
     return (
@@ -210,32 +387,18 @@ export default function Menu() {
           <p className="muted">
             Scan the QR code on your table, or pick your table below to start an order.
           </p>
-          <div className="table-grid">
-            {tables.map((table) => (
-              <button key={table.id} type="button" className="table-chip" onClick={() => pickTable(table.id)}>
-                <span>{table.label}</span>
-                <small>{table.seats} seats</small>
-              </button>
-            ))}
-            {tables.length === 0 && <p className="muted small">Loading tables…</p>}
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  if (error) {
-    return (
-      <main className="page-narrow">
-        <div className="state-card">
-          <span className="state-emoji" aria-hidden="true">
-            🫥
-          </span>
-          <h1>Hmm, that link didn't work</h1>
-          <p className="muted">{error}</p>
-          <Link className="btn primary" to={cafePath("")}>
-            Back to the start
-          </Link>
+          {tables.length > 0 && (
+            <div className="table-grid">
+              {tables.map((table) => (
+                <button key={table.id} type="button" className="table-chip" onClick={() => pickTable(table.id)}>
+                  <span>{table.label}</span>
+                  <small>{table.seats} seats</small>
+                </button>
+              ))}
+            </div>
+          )}
+          {tables.length === 0 && !tablesError && <p className="muted small">Loading tables…</p>}
+          {tablesError && <RetryNotice message={tablesError} onRetry={() => setTablesAttempt((n) => n + 1)} />}
         </div>
       </main>
     );
@@ -244,81 +407,127 @@ export default function Menu() {
   return (
     <main className="menu-page">
       <header className="menu-head">
-        <div>
+        <span className="brand-mark small" aria-hidden="true">
+          ☕
+        </span>
+        <div className="menu-head-text">
           <p className="eyebrow">{cafe}</p>
           <h1>Menu</h1>
         </div>
         <div className="table-badge">
           <span>{counterService ? "Pickup" : data && data.table ? data.table.label : `Table ${tableId}`}</span>
-          <small>{counterService ? "order · pay · collect" : "scan · order · relax"}</small>
+          <small>{counterService ? "Counter service" : "Dine-in"}</small>
         </div>
       </header>
 
-      {!data && <SkeletonMenu />}
+      {!data && !error && (
+        <>
+          <div className="category-nav-wrap">
+            <div className="category-nav category-nav-skeleton" aria-hidden="true">
+              {[0, 1, 2, 3].map((key) => (
+                <span key={key} className="skeleton skeleton-pill" />
+              ))}
+            </div>
+          </div>
+          <SkeletonMenu />
+        </>
+      )}
 
       {data && (
         <>
-          <nav className="category-nav" aria-label="Menu categories">
-            {data.categories.map((category) => (
-              <button
-                key={category.name}
-                type="button"
-                onClick={() =>
-                  document.getElementById(`cat-${slug(category.name)}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
-                }
-              >
-                {category.name}
-              </button>
-            ))}
-          </nav>
+          <div className="category-nav-wrap">
+            <nav className="category-nav" aria-label="Menu categories">
+              {data.categories.map((category) => {
+                const current = activeCategory === category.name;
+                return (
+                  <button
+                    key={category.name}
+                    type="button"
+                    className={current ? "active" : undefined}
+                    aria-current={current ? "true" : undefined}
+                    onClick={() => {
+                      setActiveCategory(category.name);
+                      document
+                        .getElementById(sectionId(category.name))
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    {category.name}
+                  </button>
+                );
+              })}
+            </nav>
+            <span className="category-nav-fade" aria-hidden="true" />
+          </div>
 
           <div className="menu-sections">
             {data.categories.map((category) => (
-              <section key={category.name} id={`cat-${slug(category.name)}`} className="menu-section">
+              <section key={category.name} id={sectionId(category.name)} className="menu-section">
                 <h2>{category.name}</h2>
                 <ul className="menu-list">
                   {category.items.map((item) => (
                     <li key={item.id} className={`menu-item${item.available ? "" : " sold-out"}`}>
-                      <span className="menu-emoji" aria-hidden="true">
-                        {item.emoji}
-                      </span>
+                      {(() => {
+                        const src = resolveMenuImage(item, category.name);
+                        // A photograph is content, so it keeps real alt text; the emoji is decoration.
+                        if (!src) {
+                          return (
+                            <span className="menu-emoji" aria-hidden="true">
+                              {item.emoji}
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="menu-emoji">
+                            <img
+                              src={src}
+                              alt={item.name}
+                              loading="lazy"
+                              decoding="async"
+                              onError={() => markImageBroken(src)}
+                            />
+                          </span>
+                        );
+                      })()}
                       <div className="menu-text">
                         <div className="menu-title">
-                          <h3>{item.name}</h3>
-                          <span className="menu-price">{money(item.priceCents)}</span>
+                          <h3 className="menu-name">{item.name}</h3>
+                          {!item.available && <span className="pill sold">Sold out</span>}
                         </div>
-                        <p className="muted small">{item.description}</p>
-                        {!item.available && <span className="pill sold">Sold out</span>}
+                        {item.description && <p className="menu-desc">{item.description}</p>}
+                        <div className="menu-foot">
+                          <span className="menu-price">{money(item.priceCents)}</span>
+                          {item.available &&
+                            (cart[item.id] ? (
+                              <div className="stepper">
+                                <button
+                                  type="button"
+                                  onClick={() => setQty(item.id, (cart[item.id] || 0) - 1)}
+                                  aria-label={`Remove one ${item.name}`}
+                                >
+                                  −
+                                </button>
+                                <span>{cart[item.id]}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setQty(item.id, (cart[item.id] || 0) + 1)}
+                                  aria-label={`Add one ${item.name}`}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="add-btn"
+                                onClick={() => setQty(item.id, 1)}
+                                aria-label={`Add ${item.name} to your order`}
+                              >
+                                +
+                              </button>
+                            ))}
+                        </div>
                       </div>
-                      {item.available &&
-                        (cart[item.id] ? (
-                          <div className="stepper">
-                            <button
-                              type="button"
-                              onClick={() => setQty(item.id, (cart[item.id] || 0) - 1)}
-                              aria-label={`Remove one ${item.name}`}
-                            >
-                              −
-                            </button>
-                            <span>{cart[item.id]}</span>
-                            <button
-                              type="button"
-                              onClick={() => setQty(item.id, (cart[item.id] || 0) + 1)}
-                              aria-label={`Add one ${item.name}`}
-                            >
-                              +
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="add-btn"
-                            onClick={() => setQty(item.id, 1)}
-                            aria-label={`Add ${item.name} to your order`}
-                          >
-                            +
-                          </button>
-                        ))}
                     </li>
                   ))}
                 </ul>
@@ -351,7 +560,7 @@ export default function Menu() {
           <button
             type="button"
             onClick={() =>
-              navigate(cafePath(tableId ? `/t/${tableId}/order/${resolvedOrder.id}` : `/order/${resolvedOrder.id}`))
+              navigate(orderLink(resolvedOrder, resolvedOrder.trackToken, tableId))
             }
           >
             Open order #{resolvedOrder.id}
@@ -370,10 +579,27 @@ export default function Menu() {
         total={total}
         placing={placing}
         error={placeError}
+        payOnline={payOnline}
         tableLabel={counterService ? "Pickup order" : data && data.table ? data.table.label : `Table ${tableId}`}
       />
     </main>
   );
+}
+
+function RetryNotice({ message, onRetry }) {
+  return (
+    <div className="alert" role="alert">
+      <p>{message}</p>
+      <button type="button" className="btn ghost small-btn" onClick={onRetry}>
+        Try again
+      </button>
+    </div>
+  );
+}
+
+// Section ids are derived from the category name, so the rail and the sections can never disagree.
+function sectionId(name) {
+  return `cat-${slug(name)}`;
 }
 
 function readCart(cartKey) {
@@ -403,6 +629,7 @@ function SkeletonMenu() {
                 <div className="menu-text">
                   <div className="skeleton-line w-60" />
                   <div className="skeleton-line w-90" />
+                  <div className="skeleton-line w-30" />
                 </div>
               </li>
             ))}

@@ -117,13 +117,30 @@ directory and click through to that café. To preview what a guest sees, open `h
 `http://localhost:3000/operator` is where more cafés are created — set `OPERATOR_PASSWORD` in `.dev.vars`
 first.
 
+## Order tracking
+
+A guest tracks an order with a per-order token, issued **once** in the checkout reply and carried in the URL
+fragment (`/c/<slug>/order/<id>#t=…`), so it never appears in a request line, an access log or a `Referer`. The
+token is 43 URL-safe characters derived with HMAC-SHA256 from a 192-bit per-order nonce and a key built from
+`ORDER_TRACK_SECRET` (or `ADMIN_SECRET` when that is unset). D1 stores only the nonce and `sha256(token)`, so a
+database dump cannot be replayed, and a checkout retry returns the same token because it is recomputed from the
+stored nonce rather than remembered.
+
+`GET /api/cafes/:slug/orders/:id` and `POST /api/cafes/:slug/orders/:id/payment` both require the token in an
+`x-order-token` header and answer one generic 404 for a missing, wrong or legacy token — an order id alone is not
+a credential. Orders placed before this shipped have no tracking data and stay unreadable to guests; staff see
+them on the board as before.
+
 ## Staff passwords
 
 The passwords and the token-signing secret are Worker configuration:
 
 - `OPERATOR_PASSWORD` — unlocks `/operator`. No default: unset means the console is closed.
-- `OWNER_PASSWORD` (or `ADMIN_PIN`) — the **fallback** password for the first café only, for deployments that
-  predate per-café passwords. A café with its own password ignores it.
+- `OWNER_PASSWORD` — used once, at startup, to seed the **first café's own password hash** for deployments
+  that predate per-café passwords. It must meet the same 12-character minimum as any other owner password;
+  a missing or shorter value is never installed. It is never compared at sign-in and never applies to another
+  café. `ADMIN_PIN` is not read at all: a café with no stored hash refuses sign-in (503) until the operator sets
+  a password.
 - `CAFE_NAME` — the name of the first café, shown in the app and inside the Razorpay checkout.
 - `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` — the gateway keys. Without the key
   secret guests are offered counter payment instead of a pay button. Never put any of these in
@@ -230,7 +247,9 @@ The `database_id` in `wrangler.jsonc` is a placeholder — create a real D1 data
 npx wrangler d1 create corner-cup
 ```
 
-For the hosted version, set `ADMIN_SECRET` (required — staff and operator sign-in return 503 without it), `OPERATOR_PASSWORD`, and `OWNER_PASSWORD` as Worker secrets. There is no PIN default in `wrangler.jsonc`.
+For the hosted version, set `ADMIN_SECRET` (required — staff and operator sign-in return 503 without it), `OPERATOR_PASSWORD`, and `OWNER_PASSWORD` as Worker secrets. `OWNER_PASSWORD` only seeds the first café's hash on
+first boot; after that the owner changes it from the staff board and the variable can be removed. `ADMIN_PIN` is not
+read at all.
 
 ## Notes
 
@@ -261,7 +280,7 @@ the café list itself is operator-only.
 | `POST /api/orders/:id/payment/razorpay` | Creates a Razorpay order for the server total and returns the public key id and Razorpay order id. |
 | `POST /api/orders/:id/payment/razorpay/verify` | Verifies HMAC-SHA256(`order_id\|payment_id`) with the key secret, fetches the payment, checks currency, order and exact amount, then marks the ticket paid. |
 | `POST /api/razorpay/webhook` | Razorpay webhook. `X-Razorpay-Signature` is checked against the **raw** body with `RAZORPAY_WEBHOOK_SECRET`. Same handler as `/api/webhooks/razorpay`. |
-| `GET /api/health` | Liveness: Worker + D1 check, active payment rail. No secrets. |
+| `GET /api/health` | Liveness: Worker + D1 check. No secrets. |
 | `GET /api/admin/settings` | Reads the per-café configuration (name, service style, clock, contact details). Staff session required. |
 | `PATCH /api/admin/settings` | Saves any subset of those settings after validation. Staff session required. |
 | `GET /owner` | Owner board (`/admin` still works). Paid orders by default, an *Unpaid / failed* tab, Preparing/Done buttons, payment id per order. |
@@ -274,7 +293,7 @@ the café list itself is operator-only.
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Gateway credentials. Both are required before online payments turn on. |
 | `RAZORPAY_WEBHOOK_SECRET` | Verifies `/api/razorpay/webhook`. Without it the endpoint returns 503. |
 | `OPERATOR_PASSWORD` | Unlocks `/operator`, where cafés are created. No default: unset closes the console. |
-| `OWNER_PASSWORD` | Fallback password for the first café (falls back to `ADMIN_PIN`). No default: unset means login is refused rather than open. Cafés created from `/operator` use their own hashed password instead. |
+| `OWNER_PASSWORD` | Seeds the first café's own password hash, once, at startup, and only while that café has no hash. It must be 12–100 characters, like every other owner password, or nothing is installed. It is never compared during sign-in and never applies to another café; `ADMIN_PIN` is not read. No default: unset means the first café's sign-in is refused rather than opened by a shared secret. Cafés created from `/operator` use their own hashed password instead. |
 | `SERVICE_MODE` | Starting value only for the first café: `tables` or `counter`. Once saved in **Staff → Café setup** the database value wins. |
 | `CAFE_NAME` | Starting value only for the first café's name; the panel overrides it. |
 | `CAFE_TZ_OFFSET_MIN` | Starting value only for the first café's clock (default `330`); the panel overrides it. |

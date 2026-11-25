@@ -3,10 +3,11 @@ import { api } from "../lib/api.js";
 import { loadSiteConfig } from "../lib/config.js";
 import { loadRazorpay } from "../lib/razorpay.js";
 import { money } from "../lib/money.js";
+import { gatewayEnabled } from "../lib/payments.js";
 
 // This build takes money through Razorpay only — no UPI ID is shown to guests, so nothing can be
 // transferred to a handle the café is not watching. Paying at the counter stays as the offline option.
-export default function PaymentPanel({ order, onUpdated }) {
+export default function PaymentPanel({ order, onUpdated, trackToken }) {
   const [config, setConfig] = useState(null);
   const [busy, setBusy] = useState("");
   const [awaiting, setAwaiting] = useState(false);
@@ -26,8 +27,8 @@ export default function PaymentPanel({ order, onUpdated }) {
     };
   }, []);
 
-  const provider = (config && config.payments && config.payments.provider) || "none";
-  const gateway = provider === "razorpay";
+  // Same rule the checkout uses, so a café is never shown a pay button this deployment cannot honour.
+  const gateway = gatewayEnabled(config);
 
   const startCheckout = async () => {
     setBusy("checkout");
@@ -35,6 +36,8 @@ export default function PaymentPanel({ order, onUpdated }) {
     try {
       const { payment } = await api(`/api/orders/${order.id}/payment/razorpay`, {
         method: "POST",
+        // The order token is the capability; an id alone no longer starts a payment.
+        headers: { "x-order-token": trackToken || "" },
         body: JSON.stringify({}),
       });
       const Razorpay = await loadRazorpay();
@@ -91,7 +94,11 @@ export default function PaymentPanel({ order, onUpdated }) {
     setBusy("counter");
     setError("");
     try {
-      await api(`/api/orders/${order.id}/payment`, { method: "POST", body: JSON.stringify({ status: "counter" }) });
+      await api(`/api/orders/${order.id}/payment`, {
+        method: "POST",
+        headers: { "x-order-token": trackToken || "" },
+        body: JSON.stringify({ status: "counter" }),
+      });
       onUpdated();
     } catch (err) {
       setError(err.message);
@@ -152,7 +159,7 @@ export default function PaymentPanel({ order, onUpdated }) {
         </div>
       )}
 
-      {error && <p className="alert">{error}</p>}
+      {error && <p className="alert" role="alert">{error}</p>}
 
       <p className="muted small center">
         Order #{order.id} is already with the kitchen — paying now just settles the bill.

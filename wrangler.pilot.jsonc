@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "corner-cup-local-pilot",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-11-01",
+  // Same static-wasm rule as wrangler.jsonc: Argon2id's wasm modules are imported, never compiled
+  // from bytes.
+  "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  // A dedicated, namespace-separated D1 binding. Everything it writes lives under
+  // .local-pilot/state (see scripts/local-pilot.mjs); it is never the staging or production database.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "corner-cup-local-pilot",
+      "database_id": "9f6c2a51-7d34-4c8e-9a1b-2f5e8d3c6b70"
+    }
+  ],
+  // R2 is deliberately NOT declared here. The pilot runs with image storage unconfigured, which is
+  // exactly the payment-free pilot situation: uploads must answer 503 and the menu must fall back to
+  // its bundled photographs and emoji. wrangler.jsonc keeps the real IMAGES binding untouched.
+  "vars": {
+    "CAFE_NAME": "Corner Cup Local Pilot",
+    "CAFE_SLUG": "corner-cup-local-pilot",
+    // "tables" leaves the dine-in QR flow available; the owner toggles to "counter" in the board,
+    // which is also what the verification harness exercises.
+    "SERVICE_MODE": "tables",
+    "CAFE_TZ_OFFSET_MIN": "330"
+  },
+  "observability": {
+    "enabled": false
+  }
+}

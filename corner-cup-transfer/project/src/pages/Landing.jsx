@@ -1,0 +1,133 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { api, cafePath } from "../lib/api.js";
+import { cafeName, useSiteConfig } from "../lib/config.js";
+import SiteFooter from "../components/SiteFooter.jsx";
+
+// The first screen a guest sees after scanning a table QR code, so it is built mobile-first:
+// one thumb-reachable primary action, large table targets, and copy that fits a 360px phone.
+export default function Landing() {
+  const [tables, setTables] = useState([]);
+  const [loadingTables, setLoadingTables] = useState(true);
+  const config = useSiteConfig();
+  const cafe = cafeName(config);
+  // Counter-service cafés have no tables to scan, so the page sells pickup instead of table service.
+  const counterService = Boolean(config && config.service && config.service.mode === "counter");
+
+  useEffect(() => {
+    api("/api/tables")
+      .then((data) => setTables(data.tables || []))
+      .catch(() => setTables([]))
+      .finally(() => setLoadingTables(false));
+  }, []);
+
+  return (
+    <main className="landing">
+      <header className="landing-bar">
+        <span className="brand-mark small" aria-hidden="true">
+          ☕
+        </span>
+        <p className="landing-bar-name">{cafe}</p>
+        <span className="landing-bar-mode">{counterService ? "Pickup" : "Dine-in"}</span>
+      </header>
+
+      <section className="landing-hero">
+        <p className="eyebrow">{counterService ? "Order ahead" : "Order from your table"}</p>
+        <h1>{counterService ? "Skip the queue" : "Order without the wait"}</h1>
+        <p className="landing-lede">
+          {counterService
+            ? `Browse the live menu at ${cafe}, pay from your phone and collect at the counter when your number is called.`
+            : `Browse the live menu at ${cafe} and send your order straight to the kitchen — no app, no waiting to catch someone's eye.`}
+        </p>
+      </section>
+
+      {counterService ? (
+        <section className="landing-action">
+          <Link className="btn primary landing-cta" to={cafePath("/menu")}>
+            Start an order
+            <span aria-hidden="true">→</span>
+          </Link>
+          <p className="landing-note">
+            UPI, cards and wallets accepted · paying at the counter is fine too
+          </p>
+        </section>
+      ) : (
+        <section className="landing-card">
+          <h2>Which table are you at?</h2>
+          <p className="muted small">
+            Tap your table to start. Or scan the QR code on the table — it opens the menu for you.
+          </p>
+          {loadingTables ? (
+            <div className="table-grid" aria-busy="true" aria-label="Loading tables">
+              {[0, 1, 2, 3, 4, 5].map((key) => (
+                <span key={key} className="table-chip table-chip-skeleton" aria-hidden="true" />
+              ))}
+            </div>
+          ) : (
+            <div className="table-grid">
+              {tables.map((table) => (
+                <Link key={table.id} className="table-chip" to={cafePath(`/t/${table.id}`)}>
+                  <span>{table.label}</span>
+                  <small>{table.seats} seats</small>
+                </Link>
+              ))}
+            </div>
+          )}
+          {!loadingTables && tables.length === 0 && (
+            <p className="muted small">
+              Table numbers aren&apos;t listed right now. Ask a staff member, or tap the button below.
+            </p>
+          )}
+          {!loadingTables && tables.length === 0 && (
+            <Link className="btn ghost" to={cafePath("/menu")}>
+              Open the menu
+            </Link>
+          )}
+        </section>
+      )}
+
+      <section className="landing-card">
+        <h2>How it works</h2>
+        <ol className="steps">
+          <li>
+            <span className="step-num" aria-hidden="true">
+              1
+            </span>
+            <div>
+              <strong>{counterService ? "Scan the code at the counter" : "Scan the QR code"}</strong>
+              <p className="muted small">
+                {counterService
+                  ? "One code for the whole café opens the live menu."
+                  : "Every table has its own code, so we always know where you're sitting."}
+              </p>
+            </div>
+          </li>
+          <li>
+            <span className="step-num" aria-hidden="true">
+              2
+            </span>
+            <div>
+              <strong>Pick your food and drinks</strong>
+              <p className="muted small">Live menu with today&apos;s sold-out items marked automatically.</p>
+            </div>
+          </li>
+          <li>
+            <span className="step-num" aria-hidden="true">
+              3
+            </span>
+            <div>
+              <strong>{counterService ? "Pay and collect" : "Send it to the kitchen"}</strong>
+              <p className="muted small">
+                {counterService
+                  ? "Pay securely by UPI, card or wallet. We'll call your pickup number when it's ready."
+                  : "Pay securely at your table — UPI, card or wallet, no app to install."}
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <SiteFooter />
+    </main>
+  );
+}
