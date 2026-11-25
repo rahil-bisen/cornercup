@@ -251,6 +251,25 @@ For the hosted version, set `ADMIN_SECRET` (required — staff and operator sign
 first boot; after that the owner changes it from the staff board and the variable can be removed. `ADMIN_PIN` is not
 read at all.
 
+### Hosting on Render (`npm start`)
+
+`npm start` runs `wrangler dev`, which does **not** read ordinary process environment variables by default.
+With no `.dev.vars` file it only looks at `.env` files, so variables entered in Render's dashboard are invisible
+to the Worker and checkout answers `503 Ordering isn't configured` (no `ORDER_TRACK_SECRET`/`ADMIN_SECRET`).
+
+In the Render service → **Environment**:
+
+1. Add `CLOUDFLARE_INCLUDE_PROCESS_ENV` = `true`. This tells wrangler to pass Render's variables to the Worker.
+2. Add the secrets (`ADMIN_SECRET`, `OPERATOR_PASSWORD`, `OWNER_PASSWORD`, `MFA_ENC_KEY`, optionally
+   `ORDER_TRACK_SECRET` and the Razorpay keys) as normal environment variables.
+3. Do **not** add a Secret File named `.dev.vars` or `.env`: a `.dev.vars` file makes wrangler ignore the
+   process environment entirely.
+4. Save, then redeploy (or *Manual Deploy → Deploy latest commit*).
+
+Note that `wrangler dev` keeps D1 in a local file under `.wrangler/state`. On Render that file lives on the
+instance's temporary disk, so data does not survive a restart or redeploy unless it is moved to persistent
+storage (see "Data on Render" below).
+
 ## Notes
 
 - Table numbers are sequential within each café and appear in guest URLs; the internal row id stays the
