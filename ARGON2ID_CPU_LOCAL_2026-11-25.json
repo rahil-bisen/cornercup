@@ -1,0 +1,103 @@
+{
+  "measuredAt": "2026-11-24T19:19:37.548Z",
+  "environment": {
+    "runtime": "node v26.13.1",
+    "platform": "win32",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 5 220 w/ Radeon 740M Graphics",
+    "simd": "preferred (SIMD attempted first; fallback not observable)"
+  },
+  "parameters": {
+    "m": 19456,
+    "t": 2,
+    "p": 1,
+    "saltBytes": 16,
+    "tagBytes": 32
+  },
+  "workerSource": "worker/passwords.js",
+  "wasm": {
+    "simdSha256": "50647e10fc8e0adba4f60726f3f0d77db0e3c73516b05a83ad10390b3a8b4b0e",
+    "noSimdSha256": "1f16d8de5a6d8a3a4fad5885c4784f57713d3626fd7d55f852fd79ecadbc4f8e"
+  },
+  "warmUp": {
+    "cpuMs": 78,
+    "wallMs": 46.48
+  },
+  "samples": [
+    {
+      "cpuMs": 94,
+      "userMs": 78,
+      "systemMs": 16,
+      "wallMs": 40.31
+    },
+    {
+      "cpuMs": 31,
+      "userMs": 31,
+      "systemMs": 0,
+      "wallMs": 32.91
+    },
+    {
+      "cpuMs": 31,
+      "userMs": 31,
+      "systemMs": 0,
+      "wallMs": 31.03
+    },
+    {
+      "cpuMs": 32,
+      "userMs": 32,
+      "systemMs": 0,
+      "wallMs": 28.58
+    },
+    {
+      "cpuMs": 15,
+      "userMs": 15,
+      "systemMs": 0,
+      "wallMs": 26.87
+    },
+    {
+      "cpuMs": 47,
+      "userMs": 31,
+      "systemMs": 16,
+      "wallMs": 28.99
+    },
+    {
+      "cpuMs": 47,
+      "userMs": 47,
+      "systemMs": 0,
+      "wallMs": 31.28
+    },
+    {
+      "cpuMs": 47,
+      "userMs": 32,
+      "systemMs": 15,
+      "wallMs": 32.58
+    },
+    {
+      "cpuMs": 47,
+      "userMs": 15,
+      "systemMs": 32,
+      "wallMs": 29.34
+    },
+    {
+      "cpuMs": 31,
+      "userMs": 31,
+      "systemMs": 0,
+      "wallMs": 26.23
+    }
+  ],
+  "summary": {
+    "cpuMs": {
+      "min": 15,
+      "p50": 32,
+      "mean": 42.2,
+      "max": 94
+    },
+    "wallMs": {
+      "min": 26.23,
+      "p50": 29.34,
+      "max": 40.31
+    },
+    "samples": 10
+  },
+  "scope": "Local process CPU (user+system) for one Argon2id derivation using the Worker's wasm module and parameters. Excludes HTTP handling and database initialisation. Not a Cloudflare platform cpuTime reading and not a plan ceiling."
+}

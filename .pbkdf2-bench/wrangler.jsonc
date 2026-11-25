@@ -1,0 +1,12 @@
+{
+  // Throwaway benchmark Worker. Separate from the application's wrangler.jsonc, which is untouched.
+  // No bindings, no vars, no assets, no routes, no custom domains, no secrets except BENCH_TOKEN
+  // (set at deploy time with `wrangler secret put`, never stored in the repository).
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "pbkdf2-cpu-bench-f07",
+  "main": "worker.js",
+  "compatibility_date": "2025-11-01",
+  "observability": {
+    "enabled": true
+  }
+}
