@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "corner-cup",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "eefda06c-f8d6-483d-85f2-a6a21b1827d8"
     }
   ],
   // Menu photographs. `wrangler dev` simulates this bucket locally, so the upload path can be
