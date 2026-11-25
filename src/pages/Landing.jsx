@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, cafePath } from "../lib/api.js";
-import { cafeName, useSiteConfig } from "../lib/config.js";
+import { cafeName, useSiteConfigState } from "../lib/config.js";
 import { gatewayEnabled } from "../lib/payments.js";
 import SiteFooter from "../components/SiteFooter.jsx";
 
@@ -10,7 +10,9 @@ import SiteFooter from "../components/SiteFooter.jsx";
 export default function Landing() {
   const [tables, setTables] = useState([]);
   const [loadingTables, setLoadingTables] = useState(true);
-  const config = useSiteConfig();
+  // Bumped by "Try again", so the table list is fetched again together with the café config.
+  const [tablesAttempt, setTablesAttempt] = useState(0);
+  const { config, error: configError, retry: retryConfig } = useSiteConfigState();
   const cafe = cafeName(config);
   // Counter-service cafés have no tables to scan, so the page sells pickup instead of table service.
   const counterService = Boolean(config && config.service && config.service.mode === "counter");
@@ -18,11 +20,60 @@ export default function Landing() {
   const online = gatewayEnabled(config);
 
   useEffect(() => {
+    let alive = true;
+    setLoadingTables(true);
     api("/api/tables")
-      .then((data) => setTables(data.tables || []))
-      .catch(() => setTables([]))
-      .finally(() => setLoadingTables(false));
-  }, []);
+      .then((data) => {
+        if (alive) setTables(data.tables || []);
+      })
+      .catch(() => {
+        if (alive) setTables([]);
+      })
+      .finally(() => {
+        if (alive) setLoadingTables(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tablesAttempt]);
+
+  // Until the café's settings arrive we don't know its name, service style or payment options, so we
+  // show a neutral placeholder instead of guessing ("Café", "Dine-in") and then flipping.
+  if (!config) {
+    if (configError) {
+      return (
+        <main className="page-narrow">
+          <div className="state-card" role="alert">
+            <span className="state-emoji" aria-hidden="true">
+              🫥
+            </span>
+            <h1>We couldn&apos;t open this café</h1>
+            <p className="muted">{configError.message}</p>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => {
+                retryConfig();
+                setTablesAttempt((n) => n + 1);
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        </main>
+      );
+    }
+    return (
+      <main className="page-narrow">
+        <div className="state-card" aria-busy="true">
+          <span className="state-emoji" aria-hidden="true">
+            ☕
+          </span>
+          <p className="muted">Loading…</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="landing">

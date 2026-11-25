@@ -152,3 +152,60 @@ for (const mode of ["tables", "counter"]) {
     }
   });
 }
+
+test("before the config arrives the page shows loading, not a generic café", async () => {
+  const slug = "slow-config";
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const page = await mount(slug, async (rest) => {
+    if (rest.startsWith("config")) {
+      await held;
+      return ok(configFor(slug, { mode: "counter" }));
+    }
+    return tables();
+  });
+  try {
+    assert.match(page.text(), /Loading/);
+    assert.doesNotMatch(page.text(), /Café|Dine-in|Pickup|table/i);
+    assert.ok(page.container.querySelector('[aria-busy="true"]'));
+
+    release();
+    await page.flush();
+    assert.match(page.text(), /CAFE-slow-config/);
+    assert.match(page.text(), /Pickup/);
+    assert.doesNotMatch(page.text(), /Dine-in/);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a failed config load shows the error and Try again recovers", async () => {
+  const slug = "flaky-config";
+  let configCalls = 0;
+  const page = await mount(slug, (rest) => {
+    if (rest.startsWith("config")) {
+      configCalls += 1;
+      return configCalls === 1 ? fail(503, "Server is waking up") : ok(configFor(slug));
+    }
+    return tables();
+  });
+  try {
+    assert.match(page.text(), /couldn.t open this café/i);
+    assert.match(page.text(), /Server is waking up/);
+    assert.doesNotMatch(page.text(), /Dine-in/);
+
+    const retry = [...page.container.querySelectorAll("button")].find((b) => /Try again/.test(b.textContent));
+    assert.ok(retry, "a Try again button is offered");
+    const tableCallsBefore = page.calls.filter((u) => u.endsWith("/tables")).length;
+    await page.click(retry);
+
+    assert.equal(configCalls, 2);
+    assert.match(page.text(), /CAFE-flaky-config/);
+    assert.match(page.text(), /Dine-in/);
+    assert.ok(page.calls.filter((u) => u.endsWith("/tables")).length > tableCallsBefore, "tables are refetched too");
+  } finally {
+    await page.unmount();
+  }
+});
