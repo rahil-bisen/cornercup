@@ -270,6 +270,23 @@ Note that `wrangler dev` keeps D1 in a local file under `.wrangler/state`. On Re
 instance's temporary disk, so data does not survive a restart or redeploy unless it is moved to persistent
 storage (see "Data on Render" below).
 
+### Data on Render
+
+`npm start` passes no `--persist-to`, so the D1 database is a SQLite file under `.wrangler/state/` in the
+app folder. Render resets that folder on every deploy and restart (free instances also restart after idling).
+The app then recreates its tables and seeds the demo menu, so it *looks* healthy, but cafés created in
+`/operator`, owner passwords and MFA enrollments, menu edits, tables and all orders are gone.
+
+Options, best first:
+
+1. **Deploy to Cloudflare Workers with a real D1 database** (`npx wrangler d1 create corner-cup`, put the id in
+   `wrangler.jsonc`, `npm run deploy`, secrets via `wrangler secret put`). This is what the app is built for:
+   D1 is durable and has point-in-time restore. Render is then not needed.
+2. **Stay on Render with a persistent disk** (paid instance): attach a disk, e.g. at `/var/data`, and change the
+   Render start command to `npx wrangler dev --ip 0.0.0.0 --port 3000 --persist-to /var/data/wrangler`. Data
+   survives restarts, but this is still a development server on one instance, and backups are up to you.
+3. **Keep Render free as a demo only**, accepting that data is wiped regularly.
+
 ## Notes
 
 - Table numbers are sequential within each café and appear in guest URLs; the internal row id stays the
