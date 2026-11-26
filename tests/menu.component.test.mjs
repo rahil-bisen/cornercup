@@ -96,6 +96,9 @@ function respond(url, modes, init = {}) {
   const entry = modes && modes[slug];
   const mode = typeof entry === "string" ? entry : (entry && entry.mode) || "tables";
   const gateway = Boolean(entry && typeof entry === "object" && entry.gateway === true);
+  // `ordering: false` mimics a Worker with no tracking key, which reports that it cannot take orders;
+  // `ordering: "omit"` mimics an older Worker that never sent the field at all.
+  const ordering = entry && typeof entry === "object" ? entry.ordering : undefined;
 
   if (rest.startsWith("config")) {
     return json({
@@ -103,6 +106,7 @@ function respond(url, modes, init = {}) {
       slug,
       cafe: { name: `CAFE-${slug}` },
       service: { mode },
+      ...(ordering === "omit" ? {} : { ordering: { available: ordering !== false } }),
       payments: { provider: gateway ? "razorpay" : "none", gateway, keyId: gateway ? "rzp_test_key" : null },
     });
   }
@@ -445,6 +449,32 @@ test("a table cafe with no gateway submits 'counter' and keeps its table", async
     assert.equal(body.paymentMethod, "counter", "table service without a gateway pays at the counter");
     assert.equal(body.tableId, 2, "the table is still sent");
     assert.deepEqual(body.items, [{ itemId: 1, qty: 1 }]);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a deployment that cannot take orders says so in the cart and never sends a doomed checkout", async () => {
+  const page = await mount("/c/closed-c1", { "closed-c1": { mode: "counter", ordering: false } });
+  try {
+    const place = await openCheckout(page, "closed-c1");
+    assert.match(page.text(), /Ordering from your phone isn't available right now/);
+    assert.equal(place.disabled, true, "the send button is disabled");
+
+    await page.click(place);
+    assert.equal(page.requests.filter((r) => r.method === "POST").length, 0, "no order was submitted");
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a config without the ordering field keeps checkout open", async () => {
+  // An older Worker never sends `ordering`; only an explicit `available: false` may close checkout.
+  const page = await mount("/c/legacy-c1", { "legacy-c1": { mode: "counter", ordering: "omit" } });
+  try {
+    const place = await openCheckout(page, "legacy-c1");
+    assert.doesNotMatch(page.text(), /isn't available right now/);
+    assert.equal(place.disabled, false);
   } finally {
     await page.unmount();
   }

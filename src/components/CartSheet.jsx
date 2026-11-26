@@ -23,6 +23,9 @@ function OpenCartSheet({
   // True only when this café reports a live payment gateway, so the copy never promises an online
   // checkout that the deployment cannot take.
   payOnline = false,
+  // True when the server has said it cannot accept orders, so the guest learns it before sending.
+  orderingClosed = false,
+  orderingClosedMessage = "",
 }) {
   const sheetRef = useRef(null);
   const closeRef = useRef(null);
@@ -173,16 +176,22 @@ function OpenCartSheet({
         <footer className="sheet-foot">
           {/* The reassurance sits above the action, so the button a thumb aims for is the last thing
               in the sheet and the first thing kept when the on-screen keyboard eats the height. */}
-          <p className="muted small center">
-            {payOnline
-              ? "Pay on the next screen — no queue at the counter."
-              : "Pay at the counter when you collect — card, cash or UPI."}
-          </p>
+          {orderingClosed ? (
+            <p className="alert" role="status">
+              {orderingClosedMessage}
+            </p>
+          ) : (
+            <p className="muted small center">
+              {payOnline
+                ? "Pay on the next screen — no queue at the counter."
+                : "Pay at the counter when you collect — card, cash or UPI."}
+            </p>
+          )}
           <div className="sheet-total">
             <span className="muted">Total</span>
             <strong>{money(total)}</strong>
           </div>
-          <button type="button" className="btn primary" onClick={onPlace} disabled={placing || lines.length === 0}>
+          <button type="button" className="btn primary" onClick={onPlace} disabled={placing || lines.length === 0 || orderingClosed}>
             {placing ? "Sending…" : payOnline ? "Send order & pay" : "Send order"}
           </button>
           <button type="button" className="link-btn center-self" onClick={onClose}>

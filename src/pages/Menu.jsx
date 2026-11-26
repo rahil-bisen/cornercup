@@ -260,6 +260,9 @@ export default function Menu() {
   // The café's own config decides the rail: online only when this deployment reports a live gateway,
   // otherwise pay-at-counter. Never a hardcoded default — see src/lib/payments.js.
   const payOnline = gatewayEnabled(config);
+  // The server reports when it cannot take an order (no tracking key configured). Only an explicit
+  // `false` closes checkout, so a config from an older Worker without the field keeps ordering open.
+  const orderingClosed = Boolean(config && config.ordering && config.ordering.available === false);
 
   const buildCheckoutPayload = () => ({
     ...(tableId ? { tableId: Number(tableId) } : {}),
@@ -284,6 +287,10 @@ export default function Menu() {
     setPlaceError("");
     if (!tableId && !counterService) {
       setPlaceError("Pick your table first — the kitchen needs to know where to bring it.");
+      return;
+    }
+    if (orderingClosed) {
+      setPlaceError(ORDERING_CLOSED_MESSAGE);
       return;
     }
     setPlacing(true);
@@ -580,11 +587,16 @@ export default function Menu() {
         placing={placing}
         error={placeError}
         payOnline={payOnline}
+        orderingClosed={orderingClosed}
+        orderingClosedMessage={ORDERING_CLOSED_MESSAGE}
         tableLabel={counterService ? "Pickup order" : data && data.table ? data.table.label : `Table ${tableId}`}
       />
     </main>
   );
 }
+
+const ORDERING_CLOSED_MESSAGE =
+  "Ordering from your phone isn't available right now. Please order with our staff at the counter.";
 
 function RetryNotice({ message, onRetry }) {
   return (
