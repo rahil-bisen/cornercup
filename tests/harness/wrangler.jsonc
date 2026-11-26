@@ -3,11 +3,16 @@
   "name": "corner-cup-batch-harness",
   "main": "worker.mjs",
   "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat"],
   "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
   "vars": {
     // Guest tracking needs a key, and this harness deliberately has no ADMIN_SECRET so the
     // "sign-in is 503 without one" test still has a deployment to point at. Test-only value.
     "ORDER_TRACK_SECRET": "test-order-track-secret-for-harness-only",
+    "CAFE_NAME": "Corner Cup Café",
+    "SERVICE_MODE": "tables",
+    "CAFE_TZ_OFFSET_MIN": "330",
+    "SEED_DEMO_DATA": "true",
     // Test-only: make expired-row cleanup deterministic for the F-06 cleanup tests.
     "RATE_LIMIT_CLEANUP_PROBABILITY": "1"
   },

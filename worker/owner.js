@@ -78,7 +78,7 @@ async function allow(env, request, scope, limit, windowMs) {
         "expires = CASE WHEN rate_limits.expires <= ? THEN ? ELSE rate_limits.expires END, " +
         "updated_at = ? RETURNING count"
     )
-      .bind(key, now, now + windowMs, now, now, now, now, now + windowMs, now)
+    .bind(key, now, now + windowMs, now, now, now, now, now, now + windowMs, now)
       .first();
     return !row || Number(row.count) <= limit;
   } catch (err) {

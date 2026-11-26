@@ -195,6 +195,22 @@ test("the server prices the cart and ignores client-supplied money", { skip }, a
   }
 });
 
+test("Razorpay orders are refused until gateway credentials are configured", { skip }, async () => {
+  const cafe = await seed();
+  const key = crypto.randomUUID();
+  try {
+    const res = await checkout(H, cafe, key, cart(cafe, 1, { paymentMethod: "razorpay" }));
+    assert.equal(res.status, 503);
+    assert.match(String((await res.json()).error), /online payments/i);
+
+    const state = await stored(H, cafe, key);
+    assert.equal(state.orders.length, 0);
+    assert.equal(state.claim, null);
+  } finally {
+    await clean(cafe);
+  }
+});
+
 test("quantities are validated and bounded", { skip }, async () => {
   const cafe = await seed();
   try {

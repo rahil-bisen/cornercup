@@ -19,6 +19,14 @@ OPERATOR_PASSWORD=
 # MFA_ENC_KEY=
 # MFA_ENC_KEY_PREVIOUS=
 
+# WorkOS-managed owner authentication. Configure these only when a café uses WorkOS mode.
+WORKOS_CLIENT_ID=
+WORKOS_API_KEY=
+WORKOS_REDIRECT_URI=
+WORKOS_ISSUER=
+# Encryption key for OAuth state; must be at least 32 characters.
+WORKOS_STATE_ENCRYPTION_KEY=
+
 # The values below are only the STARTING point for the FIRST café on a deployment. Once the owner
 # saves "Café setup" in the staff panel, D1 holds the real name, service mode and clock, and these
 # are ignored. Every later café is created from /operator with its own hashed password.
@@ -30,6 +38,8 @@ CAFE_NAME=Your Café
 SERVICE_MODE=tables
 # Minutes the café clock runs ahead of UTC, so takings and pickup numbers roll over at local midnight.
 CAFE_TZ_OFFSET_MIN=330
+# Local-only opt-in for the sample menu and numbered tables. Do not set this in production.
+SEED_DEMO_DATA=true
 
 # Fallback owner password for the first café's board (/c/<slug>/owner). No default — login is
 # refused while this is unset and the café has no password of its own.

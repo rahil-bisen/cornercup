@@ -340,17 +340,20 @@ async function init(env) {
   idempotencyIndexReady = await ensureIdempotencyIndex(env);
   const primary = await ensurePrimaryCafe(env);
   await bootstrapPrimaryPassword(env, primary);
-  await seedMenu(env, primary.id);
-  await seedTables(env, primary.id);
+  if (primary && env.SEED_DEMO_DATA === "true") {
+    await seedMenu(env, primary.id);
+    await seedTables(env, primary.id);
+  }
 }
 
 // The first café inherits the environment variables, which keeps a single-café deployment behaving
 // exactly as it did before multi-tenancy existed.
-async function ensurePrimaryCafe(env) {
+export async function ensurePrimaryCafe(env) {
   const existing = await env.DB.prepare("SELECT * FROM cafes ORDER BY id ASC LIMIT 1").first();
   if (existing) return existing;
 
-  const name = env.CAFE_NAME || "Corner Cup Café";
+  const name = String(env.CAFE_NAME || "").trim();
+  if (!name) return null;
   const mode = String(env.SERVICE_MODE || "").trim().toLowerCase() === "counter" ? "counter" : "tables";
   const tz = Number(env.CAFE_TZ_OFFSET_MIN);
   const slug = slugify(env.CAFE_SLUG || name);
@@ -451,6 +454,8 @@ async function adoptLegacySettings(env, cafeId) {
 }
 
 export async function seedMenu(env, cafeId) {
+  if (env.SEED_DEMO_DATA !== "true") return;
+
   const menu = await env.DB.prepare("SELECT COUNT(*) AS count FROM menu_items WHERE cafe_id = ?")
     .bind(cafeId)
     .first();

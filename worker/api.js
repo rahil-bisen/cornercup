@@ -1087,7 +1087,11 @@ async function createOrder(request, env, cafe) {
   const normalized = normalizeCheckoutBody(body, { counter });
   if (normalized.error === "empty") return json({ error: "Your order is empty." }, 400);
   if (normalized.error === "too_many") return json({ error: "That's a big order — please split it into two." }, 400);
+  if (normalized.error === "payment_method") return json({ error: "Choose a supported payment method." }, 400);
   if (normalized.error) return json({ error: "One of those items isn't valid." }, 400);
+  if (normalized.paymentMethod === "razorpay" && !razorpayConfigured(env)) {
+    return json({ error: "Online payments aren't switched on yet." }, 503);
+  }
 
   // Transitional: a client from before the key existed still gets an order, with no retry protection
   // — but it gets a fingerprint, so no unverifiable row is ever written again.
@@ -3773,6 +3777,9 @@ async function adminReseedMenu(request, env, cafe) {
   if (!csrf.ok) {
     return json({ error: "That request couldn't be verified. Reload the board and try again." }, 403);
   }
+  if (env.SEED_DEMO_DATA !== "true") {
+    return json({ error: "Sample menu seeding is disabled." }, 409);
+  }
   const statements = [env.DB.prepare("DELETE FROM menu_items WHERE cafe_id = ?").bind(cafe.id)];
 
   for (const [category, name, description, priceCents, emoji, sort] of SEED_MENU) {
@@ -3828,6 +3835,11 @@ async function getMenuImage(env, cafe, id) {
   try {
     bytes = await obj.arrayBuffer();
   } catch (err) {
+    console.error("R2 image body read failed", {
+      cafeId: cafe.id,
+      itemId: id,
+      error: err && err.message ? err.message : String(err),
+    });
     return json({ error: "We couldn't load that image." }, 502);
   }
   const contentType = (obj.httpMetadata && obj.httpMetadata.contentType) || "application/octet-stream";
@@ -3892,7 +3904,16 @@ async function adminUploadImage(request, env, cafe, id) {
     committed = true;
   } catch (err) {
     // Roll back the just-written object so we don't leak it.
-    try { await env.IMAGES.delete(newKey); } catch (e) { /* retryable orphan */ }
+    try {
+      await env.IMAGES.delete(newKey);
+    } catch (cleanupError) {
+      console.error("Failed to remove orphaned R2 image after D1 update failure", {
+        cafeId: cafe.id,
+        itemId: id,
+        key: newKey,
+        error: cleanupError && cleanupError.message ? cleanupError.message : String(cleanupError),
+      });
+    }
     console.error("D1 update failed after R2 upload", { cafeId: cafe.id, itemId: id, error: err && err.message ? err.message : String(err) });
     return json({ error: "We couldn't save that image. Please try again." }, 502);
   }

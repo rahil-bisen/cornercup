@@ -3,6 +3,7 @@
   "name": "corner-cup-auth-harness",
   "main": "worker.mjs",
   "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat"],
   "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
   "vars": {
     "ADMIN_SECRET": "test-admin-secret-for-harness-only",
@@ -11,6 +12,10 @@
     // Seeds the primary café's hash on first boot; the auth tests sign in with this password.
     "OWNER_PASSWORD": "harness-bootstrap-password",
     "OPERATOR_PASSWORD": "operator-test-password",
+    "CAFE_NAME": "Corner Cup Café",
+    "SERVICE_MODE": "tables",
+    "CAFE_TZ_OFFSET_MIN": "330",
+    "SEED_DEMO_DATA": "true",
     // Test-only 32-byte base64url key. MFA encryption has no ADMIN_SECRET fallback, so the harness
     // must configure its own key for the two-factor flows to be exercised at all.
     "MFA_ENC_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",

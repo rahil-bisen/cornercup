@@ -123,7 +123,7 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
     slug: "",
     password: "",
     serviceMode: "tables",
-    tables: 8,
+    tables: 0,
   });
 
   const load = useCallback(async () => {
@@ -161,7 +161,7 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
         }),
       });
       setNotice(`${payload.cafe.name} is ready at ${payload.cafe.url}`);
-      setForm({ name: "", slug: "", password: "", serviceMode: "tables", tables: 8 });
+      setForm({ name: "", slug: "", password: "", serviceMode: "tables", tables: 0 });
       await load();
     } catch (err) {
       setError(err.message);
@@ -356,8 +356,8 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
               {saving ? "Creating…" : "Create café"}
             </button>
             <p className="muted small">
-              A new café starts with the standard sample menu, so the guest site works the moment it
-              exists. The owner can edit the menu and the password from their own owner board.
+              New cafés start without menu items or tables. Add the café's real menu and, for table
+              service, its actual table count before inviting guests.
             </p>
           </form>
         </section>

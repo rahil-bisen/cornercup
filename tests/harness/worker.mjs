@@ -593,8 +593,15 @@ export default {
       await env.DB.prepare("DELETE FROM auth_events WHERE cafe_id = ?").bind(cafeId).run();
       // Rate-limit keys embed the café id, and /seed reuses the highest id after a delete. Without this,
       // a later test could inherit an exhausted login or re-authentication counter from an earlier one.
-      await env.DB.prepare("DELETE FROM rate_limits WHERE key LIKE ? OR key LIKE ?")
-        .bind(`login:${cafeId}:%`, `settings:${cafeId}:%`)
+      await env.DB.prepare(
+        "DELETE FROM rate_limits WHERE key LIKE ? OR key LIKE ? OR key LIKE ? OR key LIKE ?"
+      )
+        .bind(
+          `login:${cafeId}:%`,
+          `settings:${cafeId}:%`,
+          `ownerstart:${cafeId}:%`,
+          `ownerclaim:${cafeId}:%`
+        )
         .run();
       await env.DB.prepare("DELETE FROM csrf_tokens").run();
       await env.DB.prepare("DELETE FROM cafes WHERE id = ?").bind(cafeId).run();
