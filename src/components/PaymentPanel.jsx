@@ -118,7 +118,8 @@ export default function PaymentPanel({ order, onUpdated, trackToken }) {
   return (
     <section className="pay-card">
       <header className="pay-head">
-        <p className="eyebrow">Pay now</p>
+        {/* "Pay now" reads as an online payment, so a counter-only café gets a neutral heading. */}
+        <p className="eyebrow">{gateway ? "Pay now" : "Your bill"}</p>
         <p className="pay-amount">{money(order.totalCents)}</p>
         <p className="muted small">
           {config.cafe.name} · {order.tableLabel}
