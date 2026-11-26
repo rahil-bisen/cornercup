@@ -896,6 +896,10 @@ function getConfig(env, cafe) {
       address: settings.contactAddress,
     },
     service: { mode: settings.serviceMode },
+    // Whether this deployment can accept an order at all. Checkout fails closed with a 503 while no
+    // tracking key is configured, so the menu says so up front instead of after the guest fills a cart.
+    // A boolean only: it never reveals which secret is missing.
+    ordering: { available: trackingConfigured(env) },
     // Which sign-in this café uses, so the board can show the right entry point. A mode label only:
     // no identity, token, secret or provider session value is ever part of this payload.
     ownerAuth: cafe.owner_auth === "workos" ? "workos" : "local",

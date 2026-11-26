@@ -76,6 +76,9 @@ test("F-18: /api/config exposes café-facing settings and no credentials", { ski
     assert.equal(body.currency, "INR");
     assert.deepEqual(Object.keys(body.cafe).sort(), ["address", "email", "name", "phone"]);
     assert.deepEqual(Object.keys(body.service), ["mode"]);
+    // The harness configures ADMIN_SECRET, so orders can be tracked. Only a boolean is exposed,
+    // never which secret backs it.
+    assert.deepEqual(body.ordering, { available: true });
     // The harness has no Razorpay credentials, so the public half of the pair must be absent.
     assert.equal(body.payments.provider, "none");
     assert.equal(body.payments.gateway, false);
