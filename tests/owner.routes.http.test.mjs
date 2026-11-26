@@ -146,6 +146,22 @@ test("a local café refuses managed sign-in at the route", async () => {
   await clean(cafe.slug);
 });
 
+test("managed sign-in is rate-limited using a persisted D1 counter", async () => {
+  const cafe = await seedManaged();
+  const ip = `198.51.100.${(parseInt(RUN, 36) % 254) + 1}`;
+  const headers = { "cf-connecting-ip": ip };
+
+  try {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      assert.equal((await probe(`/api/cafes/${cafe.slug}/owner/start`, { headers })).status, 302);
+    }
+    const limited = await probe(`/api/cafes/${cafe.slug}/owner/start`, { headers });
+    assert.equal(limited.status, 429);
+  } finally {
+    await clean(cafe.slug);
+  }
+});
+
 test("the full sign-in completes over HTTP and sets the café cookie", async () => {
   const cafe = await seedManaged();
   provider.identity = { id: "user_test_1", email: "owner@example.test", email_verified: true };

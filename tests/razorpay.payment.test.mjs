@@ -51,7 +51,7 @@ async function createOrder(cafe, overrides = {}) {
   const res = await fetch(`${HARNESS}/api/cafes/${cafe.slug}/orders`, {
     method: "POST",
     headers: { ...jsonHeaders, origin: HARNESS, "idempotency-key": crypto.randomUUID() },
-    body: JSON.stringify({ paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }], ...overrides }),
+    body: JSON.stringify({ paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }], ...overrides }),
   });
   assert.equal(res.status, 201, "order creation should succeed");
   return res.json();

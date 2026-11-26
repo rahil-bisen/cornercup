@@ -13,6 +13,8 @@ export function normalizeCheckoutBody(body, { counter }) {
   const rawItems = Array.isArray(body.items) ? body.items : [];
   if (rawItems.length === 0) return { error: "empty" };
   if (rawItems.length > 40) return { error: "too_many" };
+  const paymentMethod = body.paymentMethod === undefined ? "counter" : body.paymentMethod;
+  if (paymentMethod !== "counter" && paymentMethod !== "razorpay") return { error: "payment_method" };
 
   const wanted = new Map();
   for (const item of rawItems) {
@@ -25,7 +27,7 @@ export function normalizeCheckoutBody(body, { counter }) {
   return {
     wanted,
     note: String(body.note || "").trim().slice(0, 300),
-    paymentMethod: body.paymentMethod === "counter" ? "counter" : "razorpay",
+    paymentMethod,
     tableId: counter ? null : Number(body.tableId),
   };
 }

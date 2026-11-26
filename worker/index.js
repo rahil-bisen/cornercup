@@ -8,6 +8,7 @@ export default {
 
     if (url.pathname.startsWith("/api/")) {
       try {
+        if (!env.DB) throw new Error("D1 is selected but the DB binding is not configured.");
         await ensureDb(env);
         return withSecurityHeaders(await handleApi(request, env, url, ctx));
       } catch (err) {

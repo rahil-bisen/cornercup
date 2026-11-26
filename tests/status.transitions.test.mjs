@@ -90,7 +90,7 @@ async function staffLogin(slug) {
 }
 
 async function createOrder(cafe) {
-  const body = JSON.stringify({ note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] });
+  const body = JSON.stringify({ note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] });
   const key = crypto.randomUUID();
   const res = await fetch(`${HARNESS}/api/cafes/${cafe.slug}/orders`, {
     method: "POST",
