@@ -3,6 +3,8 @@
   "name": "corner-cup",
   "main": "worker/index.js",
   "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
   // Argon2id ships two small pre-compiled modules. workerd never compiles wasm from bytes, so the
   // binaries are imported statically and instantiated with the application's own memory.
   "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
@@ -30,12 +32,6 @@
       "bucket_name": "corner-cup-images"
     }
   ],
-  "vars": {
-    "CAFE_NAME": "Corner Cup Café",
-    // "tables" (guests scan a table code) or "counter" (pickup numbers, no tables).
-    "SERVICE_MODE": "counter",
-    "CAFE_TZ_OFFSET_MIN": "330"
-  },
   "observability": {
     "enabled": true
   }

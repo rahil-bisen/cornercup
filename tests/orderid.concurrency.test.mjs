@@ -54,7 +54,7 @@ async function clean(cafeId) {
 test("F-14 retry: a single PK collision retries and succeeds with a valid token", { skip }, async () => {
   const cafe = await seed("counter");
   try {
-    const body = { note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] };
+    const body = { note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] };
     const key = crypto.randomUUID();
     const failKey = crypto.randomUUID();
     const res = await orderFetch(cafe, body, key, "pk-once", failKey);
@@ -70,7 +70,7 @@ test("F-14 retry: a single PK collision retries and succeeds with a valid token"
 test("F-14 retry: two concurrent checkouts both succeed with distinct ids", { skip }, async () => {
   const cafe = await seed("tables");
   try {
-    const body = { tableId: 1, note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] };
+    const body = { tableId: 1, note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] };
     const keyA = crypto.randomUUID();
     const keyB = crypto.randomUUID();
     const failKeyA = crypto.randomUUID();
@@ -93,7 +93,7 @@ test("F-14 retry: two concurrent checkouts both succeed with distinct ids", { sk
 test("F-14 retry: exhausted collisions return 500 and release the claim", { skip }, async () => {
   const cafe = await seed("counter");
   try {
-    const body = { note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] };
+    const body = { note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] };
     const key = crypto.randomUUID();
     const failKey = crypto.randomUUID();
     const res = await orderFetch(cafe, body, key, "pk-always", failKey);
@@ -110,7 +110,7 @@ test("F-14 retry: exhausted collisions return 500 and release the claim", { skip
 test("F-14 retry: non-PK D1 errors are not retried and fail once", { skip }, async () => {
   const cafe = await seed("counter");
   try {
-    const body = { note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] };
+    const body = { note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] };
     const key = crypto.randomUUID();
     const failKey = crypto.randomUUID();
     const res = await orderFetch(cafe, body, key, "other", failKey);
@@ -156,7 +156,7 @@ test("F-14 retry: counter path remains correct after retry", { skip }, async () 
 test("F-14 retry: idempotent replay behavior unchanged", { skip }, async () => {
   const cafe = await seed("counter");
   try {
-    const body = { note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] };
+    const body = { note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] };
     const key = crypto.randomUUID();
     const first = await orderFetch(cafe, body, key);
     assert.equal(first.status, 201);

@@ -50,7 +50,7 @@ test("T5: a dine-in order stores the internal table id, no pickup number, and re
   const body = JSON.stringify({
     tableId: 1,
     note: "",
-    paymentMethod: "razorpay",
+    paymentMethod: "counter",
     items: [{ itemId: cafe.itemId, qty: 2 }],
   });
   const key = crypto.randomUUID();
@@ -89,7 +89,7 @@ test("T5: a dine-in order stores the internal table id, no pickup number, and re
 
 test("T6: abandoning a committed checkout returns the order and leaves the claim committed", { skip }, async () => {
   const cafe = await call("/seed", { serviceMode: "counter" });
-  const body = JSON.stringify({ note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] });
+  const body = JSON.stringify({ note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] });
   const key = crypto.randomUUID();
 
   try {
@@ -123,7 +123,7 @@ test("T6: abandoning a committed checkout returns the order and leaves the claim
 // idempotency claim is handed back, and the same key succeeds on the next attempt.
 test("T7: order-id exhaustion answers 503, releases the claim, and the retry succeeds", { skip }, async () => {
   const cafe = await call("/seed", { serviceMode: "counter" });
-  const body = JSON.stringify({ note: "", paymentMethod: "razorpay", items: [{ itemId: cafe.itemId, qty: 1 }] });
+  const body = JSON.stringify({ note: "", paymentMethod: "counter", items: [{ itemId: cafe.itemId, qty: 1 }] });
   const key = crypto.randomUUID();
 
   try {

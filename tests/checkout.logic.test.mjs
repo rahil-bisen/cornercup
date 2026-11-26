@@ -40,6 +40,15 @@ test("normalise rejects empty, oversized and malformed carts", () => {
   assert.equal(normalizeCheckoutBody({ items: [{ itemId: "x", qty: 1 }] }, { counter: false }).error, "item");
 });
 
+test("payment method defaults to counter and rejects unsupported values", () => {
+  const items = [{ itemId: 7, qty: 1 }];
+  assert.equal(normalizeCheckoutBody({ items }, { counter: false }).paymentMethod, "counter");
+  assert.equal(
+    normalizeCheckoutBody({ items, paymentMethod: "gift-card" }, { counter: false }).error,
+    "payment_method"
+  );
+});
+
 test("counter mode ignores a table, dine-in keeps its number", () => {
   const items = [{ itemId: 7, qty: 1 }];
   const counter = normalizeCheckoutBody({ tableId: 3, items }, { counter: true });

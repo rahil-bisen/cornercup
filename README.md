@@ -11,7 +11,8 @@ client in one form — no rebuild and no second deployment.
 Each café runs in one of two modes: **tables** (default — every order belongs to a table) or **counter** (no
 tables at all — each order gets a pickup number the guest is called by).
 
-Built with React + Vite on the front, a Cloudflare Worker API and SQLite (D1) for storage.
+Built with React + Vite on the front and a Cloudflare Worker API backed by Cloudflare D1. Menu photographs
+are stored in Cloudflare R2.
 
 ## Design strategy (mobile-first)
 
@@ -74,8 +75,9 @@ menu item, a table, an order or a password, even though they share one Worker an
 2. Open `/operator`, sign in, and fill in the new café's name, web address, owner password and service style.
 3. Hand the client two addresses: `/c/<slug>` for guests and `/c/<slug>/owner` for staff.
 
-The new café starts with the sample menu (and tables, in table-service mode), so the guest link works
-immediately. Its owner edits the menu, tables and details from their own board.
+New cafés start with no menu items or tables. The owner adds the café's real menu and, for table service,
+its actual tables before inviting guests. Sample data is available only when `SEED_DEMO_DATA=true` is
+explicitly enabled for a local or test environment.
 
 Table ids stay globally unique because orders point at them, but the **number a guest sees** restarts at 1 for
 each café, so every client's QR codes read `/c/<slug>/t/1`, `/2`, …
@@ -89,17 +91,17 @@ What a café can change for itself lives in **Staff → Café setup**:
 - **Phone, email, address** — quoted by that café's `/about`, `/contact`, `/terms`, `/privacy` and `/refund`. A
   field left empty keeps its `[Business Name]`-style placeholder visible on purpose, because a payment
   provider's website review expects real details on those pages.
-- **Owner password** — hashed with PBKDF2-SHA256 (100k iterations) before it is stored, so a database dump does
-  not hand over any client's staff board. Each café's session lives in its own `staff_<slug>` cookie, so one
+- **Owner password** — hashed with Argon2id before it is stored, so a database dump does not hand over any
+  client's staff board. Each café's session lives in its own `staff_<slug>` cookie, so one
   browser can stay signed into two clients at once.
 
 The menu and the tables already live in the database and have their own tabs, so a fresh outlet is: sign in →
 set the name and service style → fill in the contact details → adjust the menu → add tables (table service
 only). Nothing in that list needs a build or a deploy.
 
-`CAFE_NAME`, `SERVICE_MODE` and `CAFE_TZ_OFFSET_MIN` are only the **starting values for the first café** on a
-deployment that has never been configured; they are adopted once, then the database wins. Every later café is
-created from `/operator`.
+`CAFE_NAME`, `SERVICE_MODE` and `CAFE_TZ_OFFSET_MIN` can optionally bootstrap the first café. They are
+intentionally absent from the production Wrangler config: production starts without a café until an operator
+creates one using the real business details.
 
 ## Run it locally
 
@@ -109,11 +111,13 @@ npm run dev        # builds the app, then serves it with wrangler on http://loca
 ```
 
 `npm run dev` builds the frontend and starts `wrangler dev`, which serves the static build, the `/api` routes
-and a local SQLite database. The database seeds itself on the first request with a demo menu and 8 tables.
+and a local SQLite database. Copy `.dev.vars.example` to `.dev.vars` to opt into the local demo café, sample
+menu and numbered tables; `SEED_DEMO_DATA=true` is test/development-only and must not be deployed.
 
-The database seeds itself with the first café from `CAFE_NAME`, so open `http://localhost:3000/` to see the
-directory and click through to that café. To preview what a guest sees, open `http://localhost:3000/c/<slug>/t/3`
-(or pick a table from the café's landing page). The staff screen is at `/c/<slug>/owner`, and
+With the example local variables, the database creates the demo café from `CAFE_NAME` and seeds its sample
+menu and tables. Open `http://localhost:3000/` to see the directory and click through to that café. To preview
+what a guest sees, open `http://localhost:3000/c/<slug>/t/3` (or pick a table from the café's landing page).
+The staff screen is at `/c/<slug>/owner`, and
 `http://localhost:3000/operator` is where more cafés are created — set `OPERATOR_PASSWORD` in `.dev.vars`
 first.
 
@@ -136,12 +140,14 @@ them on the board as before.
 The passwords and the token-signing secret are Worker configuration:
 
 - `OPERATOR_PASSWORD` — unlocks `/operator`. No default: unset means the console is closed.
-- `OWNER_PASSWORD` — used once, at startup, to seed the **first café's own password hash** for deployments
-  that predate per-café passwords. It must meet the same 12-character minimum as any other owner password;
+- `OWNER_PASSWORD` — used once, at startup, to seed the **first café's own password hash** only when
+  `CAFE_NAME` is explicitly configured. Production's recommended `/operator` setup does not need it because
+  the owner password is set during café creation. It must meet the same 12-character minimum as any other owner password;
   a missing or shorter value is never installed. It is never compared at sign-in and never applies to another
   café. `ADMIN_PIN` is not read at all: a café with no stored hash refuses sign-in (503) until the operator sets
   a password.
-- `CAFE_NAME` — the name of the first café, shown in the app and inside the Razorpay checkout.
+- `CAFE_NAME` — optional name for an environment-bootstrapped first café. It is intentionally absent from the
+  production config; the authenticated operator creates the real production café.
 - `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` — the gateway keys. Without the key
   secret guests are offered counter payment instead of a pay button. Never put any of these in
   `wrangler.jsonc` or a committed file.
@@ -201,7 +207,8 @@ How it fits together:
   payment id, and ignores amounts below the ticket total rather than trusting a partial payment.
 - The guest page polls the ticket and flips to **Paid** by itself; `payment.failed` leaves it unpaid so they can
   retry.
-- No keys configured? Nothing changes: the direct UPI apps, QR and staff confirmation keep working.
+- Without Razorpay keys, online checkout is unavailable and guests can choose counter payment for staff
+  confirmation; this build does not provide direct UPI checkout.
 
 ## Editing the menu
 
@@ -232,6 +239,14 @@ A café that takes orders at the counter instead of table service is switched in
 Orders in both modes share one `orders` table; table orders have a null `queue_no`, pickup orders have a null
 (`0`) table id. Switching a café between modes keeps its history.
 
+## Database and media storage
+
+The Worker uses Cloudflare D1 for all application data and Cloudflare R2 (`IMAGES`) for menu photographs.
+The D1 schema, incremental compatibility migrations, indexes and trigger are managed by `worker/db.js`.
+Production startup does not create a café or seed sample business data. `SEED_DEMO_DATA=true` is reserved for
+local/test environments. The production application has no Supabase, PostgreSQL connection or Hyperdrive
+database path.
+
 ## Deploying
 
 The app is a Worker plus static assets, so it deploys to Cloudflare:
@@ -241,15 +256,18 @@ npm run build
 npx wrangler deploy
 ```
 
-The `database_id` in `wrangler.jsonc` is a placeholder — create a real D1 database and paste its id:
+`wrangler.jsonc` binds the existing `corner-cup` D1 database (`eefda06c-f8d6-483d-85f2-a6a21b1827d8`)
+as `DB` and the existing `corner-cup-images` R2 bucket as `IMAGES`. The initial deployment uses
+`workers.dev`; no custom-domain routes are configured.
 
-```bash
-npx wrangler d1 create corner-cup
-```
-
-For the hosted version, set `ADMIN_SECRET` (required — staff and operator sign-in return 503 without it), `OPERATOR_PASSWORD`, and `OWNER_PASSWORD` as Worker secrets. `OWNER_PASSWORD` only seeds the first café's hash on
-first boot; after that the owner changes it from the staff board and the variable can be removed. `ADMIN_PIN` is not
-read at all.
+Before deployment, configure `ADMIN_SECRET` and `OPERATOR_PASSWORD` as Worker secrets. Production starts with
+an empty café directory; use the authenticated `/operator` flow to create the real café and its owner password,
+then enter the actual menu and table data from the owner board. Do not configure `SEED_DEMO_DATA` in production.
+Configure `MFA_ENC_KEY` to enable
+owner two-factor authentication. If enabling WorkOS-managed owner authentication, configure its
+`WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, `WORKOS_REDIRECT_URI`, `WORKOS_ISSUER`, and
+`WORKOS_STATE_ENCRYPTION_KEY` values as well. `OWNER_PASSWORD` is only needed for a deliberately environment-bootstrapped first café;
+`ADMIN_PIN` is not read at all.
 
 ## Notes
 
@@ -263,8 +281,8 @@ read at all.
 - Order ids are short random codes (e.g. `4KQ8ZT`), friendly to read aloud at the counter. Counter-mode
   orders also carry a small daily pickup number (`queue_no`) for calling guests.
 - Menu items are snapshotted onto the order, so deleting an item later does not rewrite history.
-- To start a new outlet from the starter menu, `POST /api/admin/menu/reseed` with a staff token replaces every
-  menu item with the seeded list in `worker/db.js`. Existing orders keep their own item snapshots.
+- `POST /api/admin/menu/reseed` replaces a menu with the sample list and is disabled unless
+  `SEED_DEMO_DATA=true`; never enable it in production. Existing orders keep their own item snapshots.
 
 ## Razorpay checkout, owner board and policy pages
 
@@ -292,11 +310,15 @@ the café list itself is operator-only.
 | --- | --- |
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Gateway credentials. Both are required before online payments turn on. |
 | `RAZORPAY_WEBHOOK_SECRET` | Verifies `/api/razorpay/webhook`. Without it the endpoint returns 503. |
+| `ADMIN_SECRET` | Required signing secret for staff and operator authentication. |
 | `OPERATOR_PASSWORD` | Unlocks `/operator`, where cafés are created. No default: unset closes the console. |
-| `OWNER_PASSWORD` | Seeds the first café's own password hash, once, at startup, and only while that café has no hash. It must be 12–100 characters, like every other owner password, or nothing is installed. It is never compared during sign-in and never applies to another café; `ADMIN_PIN` is not read. No default: unset means the first café's sign-in is refused rather than opened by a shared secret. Cafés created from `/operator` use their own hashed password instead. |
-| `SERVICE_MODE` | Starting value only for the first café: `tables` or `counter`. Once saved in **Staff → Café setup** the database value wins. |
-| `CAFE_NAME` | Starting value only for the first café's name; the panel overrides it. |
-| `CAFE_TZ_OFFSET_MIN` | Starting value only for the first café's clock (default `330`); the panel overrides it. |
+| `OWNER_PASSWORD` | Seeds the first café's own password hash only when `CAFE_NAME` is explicitly configured, and only while that café has no hash. It must be 12–100 characters. Production's operator-created café sets its own hashed password and does not need this secret. `ADMIN_PIN` is not read. |
+| `MFA_ENC_KEY` | Encrypts owner TOTP secrets at rest; required to enable two-factor enrollment. |
+| `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, `WORKOS_REDIRECT_URI`, `WORKOS_ISSUER`, `WORKOS_STATE_ENCRYPTION_KEY` | Required only when enabling WorkOS-managed owner authentication. Treat the API key and state encryption key as secrets. |
+| `SERVICE_MODE` | Optional starting value only when `CAFE_NAME` is set: `tables` or `counter`. |
+| `CAFE_NAME` | Optional name to bootstrap the first café; intentionally absent from the production config. |
+| `CAFE_TZ_OFFSET_MIN` | Optional starting clock offset only when bootstrapping the first café. |
+| `SEED_DEMO_DATA` | Local/test only. Must not be enabled in production; it seeds the sample menu and numbered tables. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_OWNER_CHAT_ID` | Optional. Paid orders are pushed to Telegram, with three attempts; a failure never affects the payment. |
 
 There is no database connection string to set: the database is the `DB` D1 binding, already attached to each environment.

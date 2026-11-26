@@ -67,17 +67,37 @@ export async function createCafe(env, { name, slug, password, serviceMode = "tab
     throw new Error("The owner password needs at least 12 characters.");
   }
 
-  const mode = serviceMode === "counter" ? "counter" : "tables";
+  if (serviceMode !== "counter" && serviceMode !== "tables") {
+    throw new Error("Choose table service or counter service.");
+  }
+  const validTableCountType =
+    typeof tables === "number" || (typeof tables === "string" && tables.trim() !== "");
+  const tableCount = validTableCountType ? Number(tables) : Number.NaN;
+  if (!Number.isSafeInteger(tableCount) || tableCount < 0 || tableCount > 40) {
+    throw new Error("The starting table count must be between 0 and 40.");
+  }
 
-  await env.DB.prepare("INSERT INTO cafes (slug, name, service_mode, pass_hash) VALUES (?, ?, ?, ?)")
-    .bind(finalSlug, cleanName, mode, await hashPassword(pass))
-    .run();
+  const mode = serviceMode;
+  const statements = [
+    env.DB.prepare("INSERT INTO cafes (slug, name, service_mode, pass_hash) VALUES (?, ?, ?, ?)")
+      .bind(finalSlug, cleanName, mode, await hashPassword(pass)),
+  ];
+
+  // Create any explicitly requested tables in the same D1 batch as the café, so a failed setup
+  // cannot leave a half-created café behind.
+  if (mode === "tables") {
+    for (let number = 1; number <= tableCount; number += 1) {
+      statements.push(
+        env.DB.prepare(
+          "INSERT INTO tables (cafe_id, number, label, seats) SELECT id, ?, ?, ? FROM cafes WHERE slug = ?"
+        ).bind(number, `Table ${number}`, number <= 2 ? 2 : 4, finalSlug)
+      );
+    }
+  }
+  await env.DB.batch(statements);
 
   const cafe = await findCafeBySlug(env, finalSlug);
   await seedMenu(env, cafe.id);
-
-  // Only a table-service café needs tables; a counter café would never fill them in.
-  if (mode === "tables") await seedTables(env, cafe.id, Math.max(0, Math.min(40, Number(tables) || 8)));
 
   return cafe;
 }
