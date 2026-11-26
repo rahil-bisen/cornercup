@@ -394,6 +394,31 @@ test("counter service → table service: the new café's table menu is requested
   }
 });
 
+for (const pathname of ["/c/slow-m1/t/2", "/c/slow-m2"]) {
+  test(`${pathname}: before the config arrives the menu shows loading, not a generic café`, async () => {
+    const slug = pathname.split("/")[2];
+    const heldUrl = `/api/cafes/${slug}/config`;
+    const page = await mount(pathname, { [slug]: "counter" }, [heldUrl]);
+    try {
+      await page.flush();
+      assert.match(page.text(), /Loading/);
+      // Neither the "Café" fallback nor a service-mode guess may show while the mode is unknown.
+      assert.doesNotMatch(page.text(), /Café|Dine-in|Pickup|Which table/i);
+      assert.ok(page.container.querySelector('[aria-busy="true"]'));
+
+      page.release(heldUrl);
+      await page.flush();
+      await page.flush();
+      assert.match(page.text(), new RegExp(`CAFE-${slug}`));
+      assert.match(page.text(), /Pickup/);
+      assert.doesNotMatch(page.text(), /Dine-in|Which table/);
+    } finally {
+      page.release(heldUrl);
+      await page.unmount();
+    }
+  });
+}
+
 // --- Stage 9A: the declared payment rail comes from the cafe's own config ---------------------
 
 async function openCheckout(page, slug) {
