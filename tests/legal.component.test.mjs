@@ -152,6 +152,24 @@ test("terms, privacy and refunds describe the gateway when the café has one", a
   }
 });
 
+test("before the config arrives a policy page shows loading, not placeholders", async () => {
+  const view = await mount("legal-slow", "terms", { hold: true });
+  try {
+    assert.match(view.text(), /Terms and conditions/);
+    assert.match(view.text(), /Loading/);
+    assert.doesNotMatch(view.text(), /\[Business Name\]|Café ·/);
+    assert.ok(view.container.querySelector('[aria-busy="true"]'));
+
+    view.release();
+    await view.flush();
+    assert.match(view.text(), /CAFE-legal-slow · QR ordering/, "the footer carries the real name");
+    assert.doesNotMatch(view.text(), /\[Business Name\]|Loading/);
+  } finally {
+    view.release();
+    await view.unmount();
+  }
+});
+
 test("counter-only terms say payment is taken at the counter", async () => {
   const view = await mount("legal-off-counter", "terms");
   try {

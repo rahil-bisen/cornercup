@@ -383,6 +383,22 @@ export default function Menu() {
     );
   }
 
+  // Until the café's settings arrive its name and service mode are unknown. Rendering anyway would show
+  // the generic "Café" with a "Dine-in" badge, or ask a counter café's guest which table they are at,
+  // and then flip. A neutral loading card is shown instead, as on the landing page.
+  if (!config) {
+    return (
+      <main className="page-narrow">
+        <div className="state-card" aria-busy="true">
+          <span className="state-emoji" aria-hidden="true">
+            ☕
+          </span>
+          <p className="muted">Loading…</p>
+        </div>
+      </main>
+    );
+  }
+
   if (!tableId && !counterService) {
     return (
       <main className="page-narrow">
