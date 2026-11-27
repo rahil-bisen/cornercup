@@ -1,0 +1,6 @@
+# PDFs written by scripts/*-qr-pack.mjs contain no NUL bytes, so Git would treat them as text and
+# rewrite their line endings on checkout, which breaks the byte offsets in the PDF's xref table.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.woff2 binary
