@@ -78,6 +78,12 @@ export function useSiteConfig(revision = 0) {
   return useSiteConfigState(revision).config;
 }
 
+// The Worker answers /config with 404 only when no café lives at the slug, so this is the one failure a
+// retry can never fix: the page shows "Café not found" instead of a "Try again" that would only loop.
+export function isCafeNotFound(error) {
+  return Boolean(error && error.status === 404);
+}
+
 export function cafeName(config) {
   return (config && config.cafe && config.cafe.name) || "Café";
 }

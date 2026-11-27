@@ -1,7 +1,8 @@
 import { Link, Navigate, useParams } from "react-router-dom";
 import SiteFooter from "../components/SiteFooter.jsx";
 import { cafePath } from "../lib/api.js";
-import { useSiteConfigState } from "../lib/config.js";
+import { isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import CafeNotFound from "../components/CafeNotFound.jsx";
 import { gatewayEnabled } from "../lib/payments.js";
 
 // Contact details come from the staff panel (Café setup). The placeholders stay visible on purpose
@@ -227,6 +228,9 @@ export default function Legal({ page: fixedPage }) {
   const pages = pagesFor(details, gatewayEnabled(config));
   if (!pages[page]) return <Navigate to={cafePath("")} replace />;
   const content = pages[page];
+
+  // A policy page for a café that does not exist would only be placeholders for nobody.
+  if (isCafeNotFound(error)) return <CafeNotFound />;
 
   // While the café's details are on their way, the "[Business Name]" placeholders would flash before
   // the real name, and the payment wording could flip. If the config fails to load, the page still

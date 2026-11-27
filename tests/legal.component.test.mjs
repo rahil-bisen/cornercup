@@ -74,7 +74,8 @@ function configFor(slug, gateway) {
 }
 
 // `hold` keeps /api/config unanswered until the returned release() is called.
-async function mount(slug, page, { gateway = false, hold = false } = {}) {
+// `missing` makes /api/config answer 404, as the Worker does for a slug with no café behind it.
+async function mount(slug, page, { gateway = false, hold = false, missing = false } = {}) {
   let release = () => {};
   const held = hold
     ? new Promise((resolve) => {
@@ -84,6 +85,9 @@ async function mount(slug, page, { gateway = false, hold = false } = {}) {
   globalThis.fetch = async (url) => {
     if (String(url).endsWith("/config")) {
       if (held) await held;
+      if (missing) {
+        return { ok: false, status: 404, text: async () => JSON.stringify({ error: "No café found at that web address." }) };
+      }
       return ok(configFor(slug, gateway));
     }
     return ok({});
@@ -174,6 +178,16 @@ test("counter-only terms say payment is taken at the counter", async () => {
   const view = await mount("legal-off-counter", "terms");
   try {
     assert.match(view.text(), /taken in person at the counter/);
+  } finally {
+    await view.unmount();
+  }
+});
+
+test("a policy page for an unknown café shows 'Café not found', not placeholders", async () => {
+  const view = await mount("demo-01", "terms", { missing: true });
+  try {
+    assert.match(view.text(), /Café not found/);
+    assert.doesNotMatch(view.text(), /\[Business Name\]|Terms/);
   } finally {
     await view.unmount();
   }

@@ -100,6 +100,11 @@ function respond(url, modes, init = {}) {
   // `ordering: "omit"` mimics an older Worker that never sent the field at all.
   const ordering = entry && typeof entry === "object" ? entry.ordering : undefined;
 
+  // `"missing"` mimics a slug with no café behind it: the Worker answers every scoped route with 404.
+  if (entry === "missing") {
+    return { ok: false, status: 404, text: async () => JSON.stringify({ error: "No café found at that web address." }) };
+  }
+
   if (rest.startsWith("config")) {
     return json({
       currency: "INR",
@@ -130,6 +135,10 @@ function respond(url, modes, init = {}) {
     });
   }
   if (rest.startsWith("menu")) {
+    // `menu: "empty"` mimics a café that exists but has not added any items yet.
+    if (entry && typeof entry === "object" && entry.menu === "empty") {
+      return json({ table: { label: "Table 1" }, categories: [] });
+    }
     return json({
       table: { label: "Table" },
       categories: [
@@ -522,6 +531,25 @@ test("a cafe with a live gateway keeps the Razorpay checkout", async () => {
     assert.deepEqual(body.items, [{ itemId: 1, qty: 1 }]);
     // The panel is on the order page, not here: nothing may be charged from the cart.
     assert.equal(page.requests.filter((r) => /\/payment/.test(r.url)).length, 0);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("an unknown café shows 'Café not found' instead of a menu or a retry loop", async () => {
+  const page = await mount("/c/demo-01/t/1", { "demo-01": "missing" });
+  try {
+    await page.flush();
+    await page.flush();
+    assert.match(page.text(), /Café not found/);
+    assert.match(page.text(), /demo-01/);
+    assert.ok(page.container.querySelector('[role="alert"]'));
+    assert.equal(
+      [...page.container.querySelectorAll("button")].filter((b) => /Try again/.test(b.textContent)).length,
+      0,
+      "a missing café will not appear on a retry"
+    );
+    assert.doesNotMatch(page.text(), /Dine-in|Which table|Table 1/);
   } finally {
     await page.unmount();
   }

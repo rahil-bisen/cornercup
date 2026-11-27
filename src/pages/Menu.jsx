@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, cafePath, cafeSlug } from "../lib/api.js";
-import { cafeName, useSiteConfigState } from "../lib/config.js";
+import { cafeName, isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import CafeNotFound from "../components/CafeNotFound.jsx";
 import { isCurrentScope, menuScope } from "../lib/menuScope.js";
 import { resolveItemImage } from "../lib/menuImages.js";
 import { money } from "../lib/money.js";
@@ -349,6 +350,7 @@ export default function Menu() {
   // itself comes first: until /api/config answers there is nothing to show a table picker for, and two
   // banners (tables + config) used to stack in the same card with two identical retries.
   const cafeFailed = Boolean(configError && !config);
+  if (cafeFailed && isCafeNotFound(configError)) return <CafeNotFound />;
   const failure = cafeFailed
     ? {
         title: "We couldn't open this menu",
