@@ -608,17 +608,73 @@ async function columnExists(env, table, column) {
   return (info.results || []).some((row) => String(row.name).toLowerCase() === column.toLowerCase());
 }
 
-async function migrate(env) {
+// Runs on every fresh isolate before the first request is answered, and every D1 call is a network round
+// trip. Applying the list one statement at a time cost ~77 round trips on an up-to-date database (each ADD
+// COLUMN failed as a duplicate and was then confirmed against the catalogue): ~15 s of wall time measured
+// on a cold live isolate, which is the client's whole request deadline.
+//
+// The outcome is unchanged; only the number of trips falls:
+//   - the columns of every table an ADD COLUMN targets are read once, in one batch;
+//   - an ADD COLUMN whose column is already there is not sent at all;
+//   - the other statements (all idempotent CREATE ... IF NOT EXISTS / guarded UPDATEs) are sent in order,
+//     consecutive ones together in one batch;
+//   - an ADD COLUMN that is really needed runs on its own with the same duplicate-only forgiveness as
+//     before, after everything listed ahead of it has been applied.
+// If the column read fails, the map is empty and every ADD COLUMN is attempted exactly as before.
+export async function migrate(env) {
+  const known = await readKnownColumns(env);
+
+  let pending = [];
+  const flush = async () => {
+    if (pending.length === 0) return;
+    const batch = pending;
+    pending = [];
+    await env.DB.batch(batch.map((sql) => env.DB.prepare(sql)));
+  };
+
   for (const sql of MIGRATIONS) {
+    const target = addColumnTarget(sql);
+    if (!target) {
+      pending.push(sql);
+      continue;
+    }
+    const table = target.table.toLowerCase();
+    const column = target.column.toLowerCase();
+    if (known.has(table) && known.get(table).has(column)) continue;
+
+    // Everything listed before this ALTER must exist first (a CREATE TABLE it depends on, for one).
+    await flush();
     try {
       await env.DB.prepare(sql).run();
     } catch (err) {
       const message = String(err && err.message ? err.message : err);
-      const target = addColumnTarget(sql);
       // Only an ADD COLUMN whose own column is already there may be skipped...
-      if (!target || !isDuplicateAddColumn(sql, message)) throw err;
+      if (!isDuplicateAddColumn(sql, message)) throw err;
       // ...and the catalogue has to agree before the failure is treated as a no-op.
       if (!(await columnExists(env, target.table, target.column))) throw err;
     }
+    if (!known.has(table)) known.set(table, new Set());
+    known.get(table).add(column);
   }
+  await flush();
+}
+
+// table (lower case) -> Set of its column names (lower case), for every table an ADD COLUMN targets. A
+// table that does not exist yet reads as empty, so its ADD COLUMN statements are attempted.
+async function readKnownColumns(env) {
+  const known = new Map();
+  const tables = [...new Set(MIGRATIONS.map(addColumnTarget).filter(Boolean).map((t) => t.table))];
+  try {
+    const results = await env.DB.batch(tables.map((table) => env.DB.prepare(`PRAGMA table_info('${table}')`)));
+    tables.forEach((table, index) => {
+      const rows = (results[index] && results[index].results) || [];
+      known.set(table.toLowerCase(), new Set(rows.map((row) => String(row.name).toLowerCase())));
+    });
+  } catch (err) {
+    console.warn("Schema read failed; applying migrations one by one", {
+      error: err && err.message ? err.message : String(err),
+    });
+    known.clear();
+  }
+  return known;
 }
