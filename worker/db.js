@@ -299,7 +299,7 @@ export const SEED_MENU = [
   ["Desserts", "Brownie with Ice Cream", "The full works.", 18000, "🍨", 430],
 ];
 
-let ready;
+let ready = false;
 
 // Ordering is gated on this. The claim table's unique index is what stops two simultaneous retries
 // from both writing an order, so a database that cannot enforce it must not accept orders at all.
@@ -309,14 +309,23 @@ export function isIdempotencyIndexReady() {
   return idempotencyIndexReady;
 }
 
-export function ensureDb(env) {
-  if (!ready) {
-    ready = init(env).catch((err) => {
-      ready = undefined;
-      throw err;
-    });
-  }
-  return ready;
+// Each request that arrives before setup has finished runs setup itself, and only a plain boolean is shared
+// across requests. On Cloudflare a promise belongs to the request that created it: sharing one setup
+// promise meant that when the first request was cancelled (the guest's browser gave up during a slow cold
+// start), every request waiting on it failed with "This promise was created by a request that has since
+// ended" -> 500. Captured on the live Worker on 2026-11-27.
+//
+// Running setup more than once is safe: every statement is idempotent (CREATE ... IF NOT EXISTS, ADD COLUMN
+// with duplicate-only forgiveness, guarded UPDATE/INSERT OR IGNORE), and it now costs a few round trips.
+export async function ensureDb(env) {
+  if (ready) return;
+  await init(env);
+  ready = true;
+}
+
+// Lets a test start from a cold isolate.
+export function resetEnsureDbForTests() {
+  ready = false;
 }
 
 export function slugify(value) {
@@ -358,14 +367,19 @@ export async function ensurePrimaryCafe(env) {
   const tz = Number(env.CAFE_TZ_OFFSET_MIN);
   const slug = slugify(env.CAFE_SLUG || name);
 
-  await env.DB.prepare(
-    "INSERT INTO cafes (slug, name, service_mode, tz_offset_min) VALUES (?, ?, ?, ?)"
+  // OR IGNORE: two cold requests can both see an empty table and both get here. The slug is unique, so
+  // the second insert is a no-op instead of a 500, and only the request that really created the row
+  // carries the legacy settings across.
+  const inserted = await env.DB.prepare(
+    "INSERT OR IGNORE INTO cafes (slug, name, service_mode, tz_offset_min) VALUES (?, ?, ?, ?)"
   )
     .bind(slug, name, mode, Number.isFinite(tz) ? tz : 330)
     .run();
 
   const created = await env.DB.prepare("SELECT * FROM cafes WHERE slug = ?").bind(slug).first();
-  await adoptLegacySettings(env, created.id);
+  if (Number((inserted && inserted.meta && inserted.meta.changes) || 0) === 1) {
+    await adoptLegacySettings(env, created.id);
+  }
   return created;
 }
 
