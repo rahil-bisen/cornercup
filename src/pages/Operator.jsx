@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api.js";
 
@@ -105,8 +105,10 @@ export default function Operator() {
           <button type="submit" className="btn primary" disabled={busy || password.length === 0}>
             {busy ? "Checking…" : "Sign in"}
           </button>
+          {/* There is no public café list — "/" opens the primary café's customer menu — so this
+              link says where it actually goes. The list itself stays behind operator sign-in. */}
           <Link className="muted small center" to="/">
-            Back to the café list
+            Go to main café site
           </Link>
         </form>
       </main>
@@ -146,6 +148,20 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
   useEffect(() => {
     load();
   }, [load]);
+
+  // The header action stays on this page. The only café list is the section below, and "/" is the
+  // primary café's customer menu, so the button refreshes the list and brings it into view instead of
+  // navigating away. Focus moves too, so a keyboard or screen-reader user lands on the list.
+  const cafesSection = useRef(null);
+  const showCafes = () => {
+    load();
+    const section = cafesSection.current;
+    if (!section) return;
+    if (typeof section.scrollIntoView === "function") {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    if (typeof section.focus === "function") section.focus({ preventScroll: true });
+  };
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -230,9 +246,9 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
           </div>
         </div>
         <div className="admin-top-actions">
-          <Link className="btn ghost small-btn" to="/">
+          <button type="button" className="btn ghost small-btn" onClick={showCafes}>
             Café list
-          </Link>
+          </button>
           <button type="button" className="btn ghost small-btn" onClick={onSignOut}>
             Sign out
           </button>
@@ -243,7 +259,7 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
       </header>
 
       <div className="admin-body">
-        <section>
+        <section ref={cafesSection} tabIndex={-1} aria-label="Cafés on this deployment">
           <div className="board-head-row">
             <h1>Cafés</h1>
             <p className="muted small">Each café has its own menu, orders and owner password</p>
