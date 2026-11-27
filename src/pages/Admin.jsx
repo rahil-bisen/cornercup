@@ -127,6 +127,7 @@ export default function Admin() {
       csrfToken={csrfToken}
       cafe={cafe}
       payments={config && config.payments}
+      serviceMode={config && config.service ? config.service.mode : null}
       onSettingsSaved={async () => {
         await refreshSiteConfig();
         setRevision((value) => value + 1);
@@ -310,7 +311,9 @@ function paymentMode(payments) {
   return gatewayEnabled({ payments }) ? "Razorpay checkout on" : "Guests pay at the counter";
 }
 
-function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments, onSettingsSaved }) {
+function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments, serviceMode, onSettingsSaved }) {
+  // A pickup café has one code for the whole café instead of one per table.
+  const counterService = serviceMode === "counter";
   const [tab, setTab] = useState("orders");
 
   const call = useCallback(
@@ -381,7 +384,7 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
         {[
           ["orders", "Orders"],
           ["menu", "Menu"],
-          ["tables", "Tables & QR"],
+          ["tables", counterService ? "QR code" : "Tables & QR"],
           ["settings", "Café setup"],
           ["security", "Security"],
         ].map(([key, label]) => (
@@ -401,7 +404,7 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
           <OrdersTab call={call} cafe={cafe} counterOnly={Boolean(payments) && !gatewayEnabled({ payments })} />
         )}
         {tab === "menu" && <MenuTab call={call} csrfToken={csrfToken} />}
-        {tab === "tables" && <TablesTab call={call} />}
+        {tab === "tables" && (counterService ? <CounterQrTab cafe={cafe} /> : <TablesTab call={call} />)}
         {tab === "settings" && <SettingsTab call={call} onSaved={onSettingsSaved} />}
         {tab === "security" && <SecurityTab call={call} onSignOut={onSignOut} />}
       </div>
@@ -1612,6 +1615,74 @@ function MenuTab({ call, csrfToken }) {
           </button>
         </form>
       )}
+    </section>
+  );
+}
+
+// A counter (pickup) café has no tables, so it gets one code for /c/<slug>/menu instead of one per table.
+// Scanning a table code in a pickup café used to end at "Send order" with "This café takes pickup
+// orders — no table is needed."; the menu now treats such a visit as a pickup order, and this is the
+// code to print instead. The printed card carries only the café name, "Scan to order" and the code.
+function CounterQrTab({ cafe }) {
+  const path = cafePath("/menu");
+  const [url, setUrl] = useState("");
+  const [code, setCode] = useState("");
+
+  useEffect(() => {
+    setUrl(`${window.location.origin}${path}`);
+  }, [path]);
+
+  useEffect(() => {
+    if (!url) return undefined;
+    let alive = true;
+    QRCode.toDataURL(url, { margin: 1, width: 640, color: { dark: "#231713", light: "#ffffff" } })
+      .then((value) => {
+        if (alive) setCode(value);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+
+  return (
+    <section>
+      <div className="board-head-row no-print">
+        <h1>Counter QR code</h1>
+        <p className="muted small">One code for the whole café — guests scan it to order for pickup</p>
+      </div>
+
+      <div className="table-tools no-print">
+        <button type="button" className="btn ghost small-btn" onClick={() => window.print()}>
+          Print sheet
+        </button>
+        <a
+          className="btn primary small-btn"
+          href={code || "#"}
+          download={`qr-counter-${cafeSlug() || "cafe"}.png`}
+          aria-disabled={code ? undefined : "true"}
+        >
+          Download PNG
+        </a>
+      </div>
+
+      <article className="qr-card counter-qr-card" data-qr-url={url || undefined}>
+        <h2>{cafe}</h2>
+        <p className="counter-qr-cta">Scan to order</p>
+        {code ? (
+          <img src={code} alt={`QR code to order from ${cafe}`} className="qr-img" />
+        ) : (
+          <div className="qr-img skeleton" />
+        )}
+        <a className="url-note no-print" href={path} target="_blank" rel="noreferrer">
+          /c/{cafeSlug()}/menu
+        </a>
+      </article>
+
+      <p className="muted small no-print counter-qr-note">
+        Table QR codes are only used for table service. If you start serving at tables, switch the service
+        style in Café setup and they will appear here.
+      </p>
     </section>
   );
 }

@@ -1534,6 +1534,31 @@ button {
   word-break: break-all;
 }
 
+/* A counter café's single code: one larger card, sized to be read from a counter standee. */
+.counter-qr-card {
+  max-width: 360px;
+  padding: 24px;
+  gap: 10px;
+}
+
+.counter-qr-card h2 {
+  font-size: 1.4rem;
+}
+
+.counter-qr-cta {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.counter-qr-card .qr-img {
+  max-width: 280px;
+}
+
+.counter-qr-note {
+  margin-top: 14px;
+  max-width: 360px;
+}
+
 /* --------------------------------------------------------------- desktop */
 
 @media (min-width: 760px) {
@@ -1623,6 +1648,25 @@ button {
     border: 1px dashed #999;
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  /* The counter sheet is one card: centred and large enough to cut out and stand on the counter. */
+  .counter-qr-card {
+    max-width: 120mm;
+    margin: 20mm auto 0;
+    padding: 12mm;
+  }
+
+  .counter-qr-card h2 {
+    font-size: 22pt;
+  }
+
+  .counter-qr-cta {
+    font-size: 16pt;
+  }
+
+  .counter-qr-card .qr-img {
+    max-width: 90mm;
   }
 }
 
