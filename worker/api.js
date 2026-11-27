@@ -649,7 +649,7 @@ async function operatorLogin(request, env) {
       console.error("Operator login lockout update failed", { error: err && err.message ? err.message : String(err) });
       return json({ error: "The operator console isn't available right now. Please try again." }, 503);
     }
-    return json({ error: "That password doesn't match." }, 401);
+    return json({ error: "Incorrect password. Please try again." }, 401);
   }
 
   try {
@@ -2186,7 +2186,7 @@ async function login(request, env, cafe) {
       console.error("F-07 login lockout update failed", { error: err && err.message ? err.message : String(err) });
       return json({ error: "Staff sign-in isn't available right now. Please try again." }, 503);
     }
-    return json({ error: "That password doesn't match." }, 401);
+    return json({ error: "Incorrect password. Please try again." }, 401);
   }
 
   // A legacy hash whose work factor this runtime cannot compute is a controlled reset, never a
@@ -2219,7 +2219,7 @@ async function login(request, env, cafe) {
       console.error("Login lockout update failed", { error: err && err.message ? err.message : String(err) });
       return json({ error: "Staff sign-in isn't available right now. Please try again." }, 503);
     }
-    return json({ error: "That password doesn't match." }, 401);
+    return json({ error: "Incorrect password. Please try again." }, 401);
   }
 
   // --- OPPORTUNISTIC MIGRATION: after a successful legacy PBKDF2 verification, move the hash to

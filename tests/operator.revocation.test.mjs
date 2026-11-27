@@ -39,6 +39,16 @@ async function opLogin() {
   return { cookie: pair, csrfToken: body && body.csrfToken ? body.csrfToken : "" };
 }
 
+test("a wrong operator password remains a 401 with the standard message", { skip }, async () => {
+  const res = await fetch(`${BASE}/api/operator/login`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ password: "not-the-operator-password" }),
+  });
+  assert.equal(res.status, 401);
+  assert.equal((await res.json()).error, "Incorrect password. Please try again.");
+});
+
 async function opSession(cookie) {
   const res = await fetch(`${BASE}/api/operator/session`, { headers: { cookie } });
   const body = await res.json().catch(() => null);

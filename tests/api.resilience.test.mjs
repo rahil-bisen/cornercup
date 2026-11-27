@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const { api, DEFAULT_TIMEOUT_MS } = await import("../src/lib/api.js");
+const { api, DEFAULT_TIMEOUT_MS, STARTUP_MESSAGE, subscribeStartupStatus } = await import("../src/lib/api.js");
 const { loadSiteConfig } = await import("../src/lib/config.js");
 const { checkoutStorageKey } = await import("../src/lib/checkout.js");
 
@@ -73,22 +73,62 @@ test("a default deadline is applied, and 0 disables it", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("a request that exceeds the timeout fails as a timeout, not a network error", async () => {
-  stubFetch(hanging);
+test("a slow safe request retries once and announces startup while retrying", async () => {
+  globalThis.window = { location: { pathname: "/" } };
+  let attempt = 0;
+  const states = [];
+  const unsubscribe = subscribeStartupStatus((active) => states.push(active));
+  const calls = stubFetch((_url, init) => {
+    attempt += 1;
+    if (attempt === 1) return hanging(_url, init);
+    return jsonResponse({ ok: true });
+  });
 
-  const started = Date.now();
-  const err = await api("/api/menu", { timeoutMs: 40 }).then(
-    () => assert.fail("expected the call to time out"),
+  try {
+    const data = await api("/api/menu", { timeoutMs: 40 });
+
+    assert.deepEqual(data, { ok: true });
+    assert.equal(calls.length, 2);
+    assert.deepEqual(states, [false, true, false]);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("a sign-in POST reports startup without retrying", async () => {
+  const calls = stubFetch(() =>
+    jsonResponse({ error: STARTUP_MESSAGE, code: "STARTING_UP" }, { status: 503 })
+  );
+
+  const err = await api("/api/operator/login", {
+    method: "POST",
+    body: JSON.stringify({ password: "never retry this" }),
+  }).then(
+    () => assert.fail("expected startup to be reported"),
     (e) => e
   );
 
-  assert.equal(err.code, "timeout");
-  assert.equal(err.reason, "timeout");
-  assert.equal(err.name, "TimeoutError");
-  assert.equal(err.canceled, undefined);
-  assert.equal(err.timeoutMs, 40);
-  assert.match(err.message, /too long/i);
-  assert.ok(Date.now() - started < 1000, "the deadline is the caller's, not the platform's");
+  assert.equal(calls.length, 1);
+  assert.equal(err.status, 503);
+  assert.equal(err.code, "STARTING_UP");
+  assert.equal(err.message, STARTUP_MESSAGE);
+});
+
+test("a timed-out unsafe request is reported as startup without retrying", async () => {
+  const calls = stubFetch(hanging);
+
+  const err = await api("/api/orders", {
+    method: "POST",
+    body: "{}",
+    timeoutMs: 40,
+  }).then(
+    () => assert.fail("expected startup to be reported"),
+    (e) => e
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(err.code, "STARTING_UP");
+  assert.equal(err.message, STARTUP_MESSAGE);
 });
 
 test("the deadline timer is cleared, so a fast reply with a long deadline leaves nothing pending", async () => {
@@ -206,7 +246,7 @@ test("the config cache evicts a failed request and a retry starts a fresh one", 
   assert.equal(data.cafe.name, "Recovered Café");
 });
 
-test("a timed-out config request is evicted too, so the next call recovers", async () => {
+test("a timed-out config request retries once and recovers within the same call", async () => {
   useCafe("timeout-cafe");
   let attempt = 0;
   const calls = stubFetch((_url, init) => {
@@ -215,15 +255,9 @@ test("a timed-out config request is evicted too, so the next call recovers", asy
     return jsonResponse({ cafe: { name: "Back Online" } });
   });
 
-  const err = await loadSiteConfig({ timeoutMs: 30 }).then(
-    () => assert.fail("expected a timeout"),
-    (e) => e
-  );
-  assert.equal(err.code, "timeout");
-
-  const data = await loadSiteConfig();
+  const data = await loadSiteConfig({ timeoutMs: 30 });
   assert.equal(data.cafe.name, "Back Online");
-  assert.equal(calls.length, 2, "the hung promise was dropped, so the retry refetched");
+  assert.equal(calls.length, 2, "the timed-out safe request was retried exactly once");
 });
 
 test("concurrent config callers share one request instead of stampeding", async () => {

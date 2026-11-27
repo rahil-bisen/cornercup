@@ -32,6 +32,31 @@ function scoped(path) {
 // How long one call may take before it is abandoned. Without a deadline a stalled request never
 // rejects, so every caller waits on it forever and its page stays on its skeleton indefinitely.
 export const DEFAULT_TIMEOUT_MS = 15000;
+export const STARTUP_MESSAGE = "Starting up, please wait…";
+
+let startupRetriesInFlight = 0;
+const startupStatusListeners = new Set();
+
+function notifyStartupStatus() {
+  const starting = startupRetriesInFlight > 0;
+  for (const listener of startupStatusListeners) listener(starting);
+}
+
+function beginStartupRetry() {
+  startupRetriesInFlight += 1;
+  notifyStartupStatus();
+}
+
+function endStartupRetry() {
+  startupRetriesInFlight = Math.max(0, startupRetriesInFlight - 1);
+  notifyStartupStatus();
+}
+
+export function subscribeStartupStatus(listener) {
+  startupStatusListeners.add(listener);
+  listener(startupRetriesInFlight > 0);
+  return () => startupStatusListeners.delete(listener);
+}
 
 // The three ways a call can fail without ever getting an answer are told apart here, because the UI
 // reacts differently to each: a deadline is worth retrying, a cancelled request is not a failure at
@@ -70,8 +95,7 @@ function transportError(cause, { timedOut, canceled, timeoutMs }) {
 //
 // `signal` stays the caller's to own: it is folded into the deadline rather than replaced, so a page
 // that abandons a request still can, and `timeoutMs: 0` opts a call out of the deadline entirely.
-export async function api(path, options = {}) {
-  const { body, method = "GET", headers = {}, signal, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+async function requestOnce(path, { body, method, headers, signal, timeoutMs }) {
 
   const requestHeaders = { ...headers };
   if (body && !(body instanceof FormData)) requestHeaders["content-type"] = "application/json";
@@ -116,9 +140,12 @@ export async function api(path, options = {}) {
     }
 
     if (!response.ok) {
-      const error = new Error((data && data.error) || "Something went wrong. Please try again.");
+      const code = data && data.code ? data.code : undefined;
+      const error = new Error(
+        code === "STARTING_UP" ? STARTUP_MESSAGE : (data && data.error) || "Something went wrong. Please try again."
+      );
       error.status = response.status;
-      error.code = data && data.code ? data.code : undefined;
+      error.code = code;
       throw error;
     }
 
@@ -133,5 +160,51 @@ export async function api(path, options = {}) {
     // timer and one listener per request.
     if (timer) clearTimeout(timer);
     if (signal) signal.removeEventListener("abort", forwardAbort);
+  }
+}
+
+function startupError(cause) {
+  const error = new Error(STARTUP_MESSAGE);
+  error.name = "StartupError";
+  error.status = cause && cause.status;
+  error.code = "STARTING_UP";
+  error.cause = cause;
+  return error;
+}
+
+export async function api(path, options = {}) {
+  const { body, method = "GET", headers = {}, signal, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const normalizedMethod = String(method).toUpperCase();
+  const safeToRetry = normalizedMethod === "GET" || normalizedMethod === "HEAD";
+  let startupNoticeShown = false;
+  let attempt = 0;
+
+  try {
+    while (true) {
+      try {
+        return await requestOnce(path, {
+          body,
+          method: normalizedMethod,
+          headers,
+          signal,
+          timeoutMs,
+        });
+      } catch (err) {
+        const startupFailure = err && (err.code === "STARTING_UP" || err.code === "timeout");
+        if (!startupFailure) throw err;
+
+        if (safeToRetry && attempt === 0 && !(signal && signal.aborted)) {
+          attempt += 1;
+          startupNoticeShown = true;
+          beginStartupRetry();
+          await Promise.resolve();
+          continue;
+        }
+
+        throw startupError(err);
+      }
+    }
+  } finally {
+    if (startupNoticeShown) endStartupRetry();
   }
 }

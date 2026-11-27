@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./styles.css";
 
-
+import { STARTUP_MESSAGE, subscribeStartupStatus } from "./lib/api.js";
 import DefaultCafe from "./pages/DefaultCafe.jsx";
 import Landing from "./pages/Landing.jsx";
 import Menu from "./pages/Menu.jsx";
@@ -12,11 +12,25 @@ import Admin from "./pages/Admin.jsx";
 import Legal from "./pages/Legal.jsx";
 import Operator from "./pages/Operator.jsx";
 
+function StartupNotice() {
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => subscribeStartupStatus(setVisible), []);
+
+  if (!visible) return null;
+  return (
+    <div className="startup-notice" role="status" aria-live="polite">
+      {STARTUP_MESSAGE}
+    </div>
+  );
+}
+
 // One deployment serves every café: everything a guest or an owner can touch lives under /c/:slug,
 // and the only deployment-wide screen is the operator console that creates them.
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
+      <StartupNotice />
       <Routes>
         <Route path="/" element={<DefaultCafe />} />
         <Route path="/operator" element={<Operator />} />
