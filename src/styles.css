@@ -2516,6 +2516,16 @@ img {
   flex-wrap: wrap;
 }
 
+/* The typed confirmation shows the phrase inline at body size, unlike a revealed password. */
+.reset-reveal .field code {
+  font-size: inherit;
+  letter-spacing: normal;
+}
+
+.archived-cafes {
+  margin-top: 28px;
+}
+
 /* ============================================ guest UI refinements (Stage 2)
    Additive only: every rule here overrides a base rule of the same selector, so the staff screens keep
    the sizes they were designed with and nothing above this line had to be rewritten. */
