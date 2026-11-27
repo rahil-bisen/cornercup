@@ -1,5 +1,5 @@
 // The owner dashboard follows the café's service mode. A counter (pickup) café has no Tables & QR tab at
-// all; its single counter QR code for /c/<slug>/menu lives in Café setup, with a printable card and a PNG
+// all; in its place a Counter QR code tab holds one code for /c/<slug>/menu, with a printable card and a PNG
 // download. A table-service café keeps its Tables & QR tab exactly as before. Saving a new service style
 // in Café setup updates both straight away, without a reload, and never touches the café's tables.
 //
@@ -177,11 +177,12 @@ async function mount(slug, mode) {
 }
 
 const TABLES_TABS = ["Orders", "Menu", "Tables & QR", "Café setup", "Security"];
-const COUNTER_TABS = ["Orders", "Menu", "Café setup", "Security"];
+// A counter café's Counter QR code tab sits where Tables & QR was.
+const COUNTER_TABS = ["Orders", "Menu", "Counter QR code", "Café setup", "Security"];
 
 function assertCounterCard(page, slug) {
   const card = page.counterCard();
-  assert.ok(card, "Café setup shows the counter QR card");
+  assert.ok(card, "the Counter QR code tab shows the card");
   assert.equal(card.getAttribute("data-qr-url"), `http://localhost/c/${slug}/menu`);
   assert.match(card.textContent, new RegExp(`CAFE-${slug}`));
   assert.match(card.textContent, /Scan to order/);
@@ -193,13 +194,16 @@ function assertCounterCard(page, slug) {
   assert.match(download[0].getAttribute("download"), /\.png$/);
 }
 
-test("a counter café has no Tables & QR tab, and its counter QR card is in Café setup", async () => {
+test("a counter café has a Counter QR code tab instead of Tables & QR", async () => {
   const page = await mount("pickup-cafe", "counter");
   try {
     assert.deepEqual(page.tabs(), COUNTER_TABS);
     assert.doesNotMatch(page.text(), /Tables & QR|Add a table/);
-    await page.open("Café setup");
+    await page.open("Counter QR code");
     assertCounterCard(page, "pickup-cafe");
+    assert.doesNotMatch(page.text(), /Table \d|Add a table/, "no table list, add table or table codes");
+    await page.open("Café setup");
+    assert.equal(page.counterCard(), null, "the card lives in its own tab, not in Café setup");
     assert.equal(
       page.srv.requests.filter((r) => r.rest === "admin/tables").length,
       0,
@@ -237,11 +241,13 @@ test("switching service style in Café setup updates the tabs and the card strai
     assert.equal(page.counterCard(), null);
 
     await page.saveServiceMode("counter");
-    assert.deepEqual(page.tabs(), COUNTER_TABS, "the Tables & QR tab is gone without a reload");
+    assert.deepEqual(page.tabs(), COUNTER_TABS, "Tables & QR is replaced by Counter QR code without a reload");
+    await page.open("Counter QR code");
     assertCounterCard(page, "switch-cafe");
 
+    await page.open("Café setup");
     await page.saveServiceMode("tables");
-    assert.deepEqual(page.tabs(), TABLES_TABS, "the tab is back");
+    assert.deepEqual(page.tabs(), TABLES_TABS, "Tables & QR is back and Counter QR code is gone");
     assert.equal(page.counterCard(), null, "the counter card is gone");
     await page.open("Tables & QR");
     assert.match(page.text(), /Table 1/, "the same tables are listed again");

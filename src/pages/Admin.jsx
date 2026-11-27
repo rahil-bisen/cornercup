@@ -315,16 +315,17 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
   // A pickup café has one code for the whole café instead of one per table.
   const counterService = serviceMode === "counter";
   const [tab, setTab] = useState("orders");
-  // A pickup café has no tables, so it has no Tables & QR tab at all; its counter QR code is in Café setup.
+  // A pickup café has no tables, so it has no Tables & QR tab at all; a Counter QR code tab takes its place.
   // The list follows the saved service mode, so a mode change in Café setup updates it without a reload.
   const tabs = [
     ["orders", "Orders"],
     ["menu", "Menu"],
-    ...(counterService ? [] : [["tables", "Tables & QR"]]),
+    counterService ? ["counter-qr", "Counter QR code"] : ["tables", "Tables & QR"],
     ["settings", "Café setup"],
     ["security", "Security"],
   ];
-  // If the tab on screen no longer exists (Tables & QR after a switch to counter service), show Orders.
+  // If the tab on screen no longer exists (Tables & QR after a switch to counter service, or the reverse),
+  // show Orders.
   const activeTab = tabs.some(([key]) => key === tab) ? tab : "orders";
 
   const call = useCallback(
@@ -410,9 +411,8 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
         )}
         {activeTab === "menu" && <MenuTab call={call} csrfToken={csrfToken} />}
         {activeTab === "tables" && <TablesTab call={call} />}
-        {activeTab === "settings" && (
-          <SettingsTab call={call} onSaved={onSettingsSaved} counterService={counterService} cafe={cafe} />
-        )}
+        {activeTab === "counter-qr" && <CounterQrCard cafe={cafe} />}
+        {activeTab === "settings" && <SettingsTab call={call} onSaved={onSettingsSaved} />}
         {activeTab === "security" && <SecurityTab call={call} onSignOut={onSignOut} />}
       </div>
     </div>
@@ -878,7 +878,7 @@ function offsetLabel(minutes) {
   return `Current (UTC${sign}${hours}${rest ? `:${String(rest).padStart(2, "0")}` : ""})`;
 }
 
-function SettingsTab({ call, onSaved, counterService = false, cafe = "" }) {
+function SettingsTab({ call, onSaved }) {
   const [form, setForm] = useState(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -1045,9 +1045,6 @@ function SettingsTab({ call, onSaved, counterService = false, cafe = "" }) {
           {saving ? "Saving…" : "Save café settings"}
         </button>
       </form>
-
-      {/* Follows the saved service style (not the unsaved dropdown), like the Tables & QR tab does. */}
-      {counterService && <CounterQrCard cafe={cafe} />}
 
       <p className="muted small">
         Guests reach this café at <strong>/c/{cafeSlug()}</strong> · staff sign in at{" "}
@@ -1632,8 +1629,8 @@ function MenuTab({ call, csrfToken }) {
 // A counter (pickup) café has no tables, so it gets one code for /c/<slug>/menu instead of one per table.
 // Scanning a table code in a pickup café used to end at "Send order" with "This café takes pickup
 // orders — no table is needed."; the menu now treats such a visit as a pickup order, and this is the
-// code to print instead. It sits in Café setup, so printing hides everything else on that page: the
-// printed sheet carries only the café name, "Scan to order" and the code.
+// code to print instead. It has its own tab, in the place of Tables & QR; the printed sheet carries only
+// the café name, "Scan to order" and the code.
 function CounterQrCard({ cafe }) {
   const path = cafePath("/menu");
   const [url, setUrl] = useState("");
@@ -1656,8 +1653,8 @@ function CounterQrCard({ cafe }) {
     };
   }, [url]);
 
-  // Café setup also holds the settings form, so while printing, the body class tells the print styles to
-  // show the card alone. It is removed when the print dialog closes.
+  // While printing, the body class tells the print styles to show the card alone (no heading, buttons or
+  // notes). It is removed when the print dialog closes.
   const printSheet = () => {
     const body = window.document.body;
     const done = () => {
@@ -1672,7 +1669,7 @@ function CounterQrCard({ cafe }) {
   return (
     <section className="counter-qr">
       <div className="board-head-row no-print">
-        <h2>Counter QR code</h2>
+        <h1>Counter QR code</h1>
         <p className="muted small">One code for the whole café — guests scan it to order for pickup</p>
       </div>
 
@@ -1704,8 +1701,8 @@ function CounterQrCard({ cafe }) {
       </article>
 
       <p className="muted small no-print counter-qr-note">
-        Table QR codes are only used for table service. Switch the service style above to table service and the
-        Tables &amp; QR tab comes back with your existing tables.
+        Table QR codes are only used for table service. Switch the service style to table service in Café setup and
+        the Tables &amp; QR tab comes back with your existing tables.
       </p>
     </section>
   );
