@@ -5,6 +5,7 @@
 import { ensureDb } from "../../worker/db.js";
 import { json, readJson } from "../../worker/http.js";
 import { handleApi, issueToken } from "../../worker/api.js";
+import { sha256Hex } from "../../worker/session.js";
 import {
   hashPassword,
   verifyPassword,
@@ -554,6 +555,86 @@ export default {
         .bind(Date.now() - 1000, cafeId)
         .run();
       return json({ expired: Number(run.meta && run.meta.changes) || 0 });
+    }
+
+    // Test-only: give a seeded café one row in every per-café table a permanent delete must clear,
+    // plus a photo in the fake R2, so the delete tests can prove scope on both sides of the line.
+    if (url.pathname === "/footprint/seed") {
+      const cafeId = Number(body.cafeId);
+      const tag = String(body.tag || cafeId);
+      const t = Date.now();
+      const item = await env.DB.prepare("SELECT id FROM menu_items WHERE cafe_id = ? ORDER BY id LIMIT 1").bind(cafeId).first();
+      const imageKey = `cafes/${cafeId}/menu/${item.id}/footprint-${tag}.png`;
+      await getFakeR2().put(imageKey, new Uint8Array([1, 2, 3]));
+      const orderId = `FP${cafeId}${tag}`.replace(/[^A-Za-z0-9]/g, "").slice(0, 20);
+      const sessionId = `fp-session-${tag}`;
+      const statements = [
+        env.DB.prepare("UPDATE menu_items SET image_key = ? WHERE id = ?").bind(imageKey, item.id),
+        env.DB.prepare(
+          "INSERT INTO orders (id, cafe_id, table_id, table_label, note, status, total_cents, payment_method, payment_status, created_at, updated_at) " +
+            "VALUES (?, ?, 0, 'Counter', '', 'new', 10000, 'counter', 'unpaid', ?, ?)"
+        ).bind(orderId, cafeId, now, now),
+        env.DB.prepare("INSERT INTO order_items (order_id, menu_item_id, name, emoji, price_cents, qty) VALUES (?, ?, 'Harness Item', '', 10000, 1)")
+          .bind(orderId, item.id),
+        env.DB.prepare(
+          "INSERT INTO checkout_claims (cafe_id, idempotency_key, fingerprint, state, lease, order_id, created_at, updated_at) VALUES (?, ?, 'fp', 'committed', '', ?, ?, ?)"
+        ).bind(cafeId, `fp-key-${tag}`, orderId, t, t),
+        env.DB.prepare("INSERT INTO owner_identities (workos_user_id, email, created, last_seen) VALUES (?, '', ?, ?) ON CONFLICT DO NOTHING")
+          .bind(`user_fp_only_${tag}`, t, t),
+        env.DB.prepare("INSERT INTO cafe_owners (cafe_id, workos_user_id, role, created) VALUES (?, ?, 'owner', ?)").bind(cafeId, `user_fp_only_${tag}`, t),
+        env.DB.prepare("INSERT INTO owner_identities (workos_user_id, email, created, last_seen) VALUES ('user_fp_shared', '', ?, ?) ON CONFLICT DO NOTHING")
+          .bind(t, t),
+        env.DB.prepare("INSERT INTO cafe_owners (cafe_id, workos_user_id, role, created) VALUES (?, 'user_fp_shared', 'owner', ?) ON CONFLICT DO NOTHING").bind(cafeId, t),
+        env.DB.prepare("INSERT INTO owner_claims (claim_hash, cafe_id, email, role, issued_by, created, expires) VALUES (?, ?, '', 'owner', 'operator', ?, ?)")
+          .bind(`fp-claim-${tag}`, cafeId, t, t + 60000),
+        env.DB.prepare("INSERT INTO owner_login_states (nonce_hash, cafe_id, created, expires) VALUES (?, ?, ?, ?)").bind(`fp-nonce-${tag}`, cafeId, t, t + 60000),
+        env.DB.prepare("INSERT INTO owner_totp (cafe_id, secret_enc, created, updated) VALUES (?, 'fp', ?, ?)").bind(cafeId, t, t),
+        env.DB.prepare("INSERT INTO owner_totp_recovery (code_hash, cafe_id, created) VALUES (?, ?, ?)").bind(`fp-code-${tag}`, cafeId, t),
+        env.DB.prepare("INSERT INTO owner_totp_challenges (challenge_hash, cafe_id, created, expires) VALUES (?, ?, ?, ?)").bind(`fp-ch-${tag}`, cafeId, t, t + 60000),
+        env.DB.prepare("INSERT INTO provider_revocations (workos_session_id, cafe_id, created, next_attempt, expires) VALUES (?, ?, ?, ?, ?)")
+          .bind(`fp-rev-${tag}`, cafeId, t, t, t + 60000),
+        env.DB.prepare("INSERT INTO owner_sessions (session_id, cafe_id, created, expires) VALUES (?, ?, ?, ?)").bind(sessionId, cafeId, t, t + 600000),
+        env.DB.prepare("INSERT INTO csrf_tokens (token_hash, operator_key_hash, expires, created) VALUES (?, ?, ?, ?)")
+          .bind(`fp-csrf-${tag}`, await sha256Hex(sessionId), t + 600000, t),
+      ];
+      for (const prefix of ["login", "settings", "totp", "pay:razorpay", "payclaim:razorpay", "ownerstart", "ownerclaim"]) {
+        statements.push(
+          env.DB.prepare("INSERT INTO rate_limits (key, count, window_start, expires, updated_at) VALUES (?, 1, ?, ?, ?)")
+            .bind(`${prefix}:${cafeId}:fp-${tag}`, t, t + 600000, t)
+        );
+      }
+      await env.DB.batch(statements);
+      return json({ imageKey, sessionId });
+    }
+
+    // Test-only, read-only: how many rows a café still has in each per-café table, whether its photo
+    // is still in the fake R2, and whether its row exists at all.
+    if (url.pathname === "/footprint") {
+      const cafeId = Number(body.cafeId);
+      const tag = String(body.tag || cafeId);
+      const count = async (sql, ...binds) => Number((await env.DB.prepare(sql).bind(...binds).first()).n);
+      const byCafe = {};
+      for (const table of [
+        "orders", "checkout_claims", "menu_items", "tables", "cafe_owners", "owner_claims", "owner_login_states",
+        "owner_totp", "owner_totp_recovery", "owner_totp_challenges", "provider_revocations", "owner_sessions",
+      ]) {
+        byCafe[table] = await count(`SELECT COUNT(*) AS n FROM ${table} WHERE cafe_id = ?`, cafeId);
+      }
+      const fpOrderId = `FP${cafeId}${tag}`.replace(/[^A-Za-z0-9]/g, "").slice(0, 20);
+      byCafe.order_items = await count("SELECT COUNT(*) AS n FROM order_items WHERE order_id = ?", fpOrderId);
+      byCafe.rate_limits = 0;
+      for (const prefix of ["login", "settings", "totp", "pay:razorpay", "payclaim:razorpay", "ownerstart", "ownerclaim"]) {
+        byCafe.rate_limits += await count("SELECT COUNT(*) AS n FROM rate_limits WHERE key = ?", `${prefix}:${cafeId}:fp-${tag}`);
+      }
+      byCafe.csrf_tokens = await count("SELECT COUNT(*) AS n FROM csrf_tokens WHERE token_hash = ?", `fp-csrf-${tag}`);
+      const identities = {
+        only: await count("SELECT COUNT(*) AS n FROM owner_identities WHERE workos_user_id = ?", `user_fp_only_${tag}`),
+        shared: await count("SELECT COUNT(*) AS n FROM owner_identities WHERE workos_user_id = 'user_fp_shared'"),
+      };
+      const audit = await env.DB.prepare("SELECT action, subject, detail FROM operator_audit WHERE cafe_id = ? ORDER BY id").bind(cafeId).all();
+      const cafe = await env.DB.prepare("SELECT id, slug, archived_at, auth_version FROM cafes WHERE id = ?").bind(cafeId).first();
+      const image = body.imageKey ? Boolean(await getFakeR2().head(String(body.imageKey))) : null;
+      return json({ cafe: cafe || null, byCafe, identities, audit: audit.results || [], image });
     }
 
     if (url.pathname === "/clean") {

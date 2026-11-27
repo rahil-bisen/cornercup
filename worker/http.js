@@ -83,6 +83,7 @@ export const BODY_LIMITS = {
   operatorLogin: 1024,
   operatorCafe: 2048, // name, slug, password, service mode, table count
   operatorReset: 1024, // optional replacement password
+  operatorRemove: 512, // the typed slug and, for a delete, the typed "delete <slug>"
   settings: 4096, // cafe name, contacts, address, timezone, optional password
   adminOrder: 1024, // status and payment status
   menuItem: 2048, // name, category, description, emoji, price

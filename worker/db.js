@@ -147,8 +147,8 @@ export const MIGRATIONS = [
   // The only place café membership exists. The composite primary key is both the uniqueness rule and
   // the duplicate-suppression mechanism, so re-granting the same identity the same café is a no-op.
   // A café may have several owners and one identity may own several cafés, which is why neither
-  // column is unique on its own. No foreign key: no café is ever deleted by this code, and the rest
-  // of the schema has none either.
+  // column is unique on its own. No foreign key: a permanent café delete (worker/cafe-removal.js) removes
+  // these rows explicitly, and the rest of the schema has none either.
   "CREATE TABLE IF NOT EXISTS cafe_owners (cafe_id INTEGER NOT NULL, workos_user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'owner', created INTEGER NOT NULL, PRIMARY KEY (cafe_id, workos_user_id))",
 
   // One row per in-flight provider sign-in. The nonce is stored hashed, and `used_at` makes a state
@@ -207,6 +207,9 @@ export const MIGRATIONS = [
   // The sign-out-everywhere witness, separate from the mode-switch witness so the two credential
   // transitions never share one column.
   "ALTER TABLE cafes ADD COLUMN auth_version_cas_token TEXT",
+  // Set when the operator archives a café: its pages answer "Café not found" and sign-in stops, while
+  // its data stays until it is restored or permanently deleted. NULL (every existing café) means active.
+  "ALTER TABLE cafes ADD COLUMN archived_at INTEGER",
 
   // Stage 17B. A second factor for the local owner password. One row per café; the secret is stored
   // only as AES-256-GCM ciphertext (`secret_enc`), and `confirmed_at` is what makes the factor
