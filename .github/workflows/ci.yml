@@ -44,21 +44,27 @@ jobs:
       # The suites talk to two real `wrangler dev` workers so D1 behaviour, cookies, CSRF and the
       # Workers runtime are exercised rather than mocked. The harness configs create their own local
       # databases under .wrangler/ and never touch a deployed resource.
+      #
+      # They start one after the other, each with its own inspector port: started together on the
+      # runner, the second died with "Address already in use (socket direct:1:default)".
       - name: Start the local harnesses
         run: |
-          npx wrangler dev --config tests/harness/wrangler.auth.jsonc --port 8790 --ip 127.0.0.1 > /tmp/harness-auth.log 2>&1 &
-          npx wrangler dev --config tests/harness/wrangler.jsonc --port 8789 --ip 127.0.0.1 > /tmp/harness-batch.log 2>&1 &
-          for attempt in $(seq 1 60); do
-            if curl -fsS -m 2 http://127.0.0.1:8790/api/health > /dev/null \
-              && curl -fsS -m 2 http://127.0.0.1:8789/api/health > /dev/null; then
-              echo "both harnesses answered"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "the harnesses did not become ready" >&2
-          tail -50 /tmp/harness-auth.log /tmp/harness-batch.log >&2
-          exit 1
+          wait_for() {
+            for attempt in $(seq 1 60); do
+              if curl -fsS -m 2 "http://127.0.0.1:$1/api/health" > /dev/null; then
+                echo "harness on port $1 answered"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "the harness on port $1 did not become ready" >&2
+            tail -n 50 /tmp/harness-auth.log /tmp/harness-batch.log >&2
+            return 1
+          }
+          npx wrangler dev --config tests/harness/wrangler.auth.jsonc --port 8790 --inspector-port 9230 --ip 127.0.0.1 > /tmp/harness-auth.log 2>&1 &
+          wait_for 8790
+          npx wrangler dev --config tests/harness/wrangler.jsonc --port 8789 --inspector-port 9231 --ip 127.0.0.1 > /tmp/harness-batch.log 2>&1 &
+          wait_for 8789
 
       - name: Test
         run: npm test
