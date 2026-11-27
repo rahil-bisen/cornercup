@@ -137,10 +137,10 @@ No. Each café has its own address, menu, tables, orders and staff password. Tes
 café's requests can't read another's.
 
 **How secure is the staff sign-in?**
-Owner passwords are stored as Argon2id hashes, sign-in attempts are rate-limited, sessions can be
-signed out on every device at once, and owners can turn on two-factor sign-in with an authenticator
-app (Security tab). These are covered by the automated test suite. Two-factor sign-in isn't shown
-in this demo.
+Owner passwords are stored as Argon2id hashes, sign-in attempts are rate-limited, and sessions can be
+signed out on every device at once. These are covered by the automated test suite. The software also
+supports two-factor sign-in with an authenticator app, but it is not switched on for this deployment,
+so don't offer it yet.
 
 **What does it run on?**
 Cloudflare Workers with a Cloudflare D1 database. Menu photos are stored in Cloudflare R2.

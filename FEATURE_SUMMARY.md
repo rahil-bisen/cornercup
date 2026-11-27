@@ -25,14 +25,13 @@ No app to install for anyone: a phone browser for guests, any browser for staff.
 - **Print your QR codes.** One code per table, as a print-ready sheet or single images.
 - **Table service or counter service.** Orders come from tables, or get a pickup number.
 - **Your café, kept separate.** Your own web address, menu, tables, orders and staff password.
-- **A protected staff sign-in.** Hashed passwords, rate-limited sign-in, "sign out everywhere", and
-  optional two-factor sign-in with an authenticator app.
+- **A protected staff sign-in.** Hashed passwords, rate-limited sign-in, and "sign out everywhere".
 
 ## What it runs on
 Cloudflare Workers, a Cloudflare D1 database, and Cloudflare R2 for menu photos.
 
 ---
 
-*Online payment (Razorpay) is supported by the software but is not switched on for this demo and is
-not part of what has been tested for it. Everything listed above was exercised on the demo café or is
+*Online payment (Razorpay) and two-factor sign-in are supported by the software but are not switched on
+for this demo and are not part of what has been tested for it. Everything listed above was exercised on the demo café or is
 covered by the project's automated tests.*
