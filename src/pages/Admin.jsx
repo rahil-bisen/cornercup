@@ -1447,6 +1447,10 @@ function MenuTab({ call, csrfToken }) {
                         onClick={() => toggle(item)}
                         disabled={busy === item.id || editItem !== null}
                         aria-pressed={item.available}
+                        // A toggle's name says what it controls and aria-pressed says its state, so a
+                        // screen reader hears "Masala Chai available, pressed" rather than an unnamed
+                        // "Sold out" that could belong to any of the rows.
+                        aria-label={`${item.name} available`}
                       >
                         <span />
                         <em>{item.available ? "Available" : "Sold out"}</em>
