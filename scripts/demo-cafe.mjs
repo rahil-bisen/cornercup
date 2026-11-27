@@ -57,8 +57,10 @@ export const DEMO_TABLES = [
 export const DEMO_MENU = [
   ["Chai & Coffee", "Masala Chai", "Kadak chai with house masala, served in a kulhad.", 4000, "🫖", true],
   ["Chai & Coffee", "Filter Coffee", "South Indian degree coffee, frothed and poured tall.", 5000, "☕", true],
-  ["Chai & Coffee", "Cappuccino", "Double shot with soft milk foam.", 12000, "☕", true],
-  ["Chai & Coffee", "Hot Chocolate", "Dark cocoa topped with whipped cream.", 13000, "🍫", true],
+  // The only bundled hot-drink photograph is chai in a kulhad, so the hot drinks are chais: a cappuccino
+  // or hot chocolate would have shown a picture of something else.
+  ["Chai & Coffee", "Adrak Chai", "Fresh ginger, brewed strong.", 4500, "🫖", true],
+  ["Chai & Coffee", "Elaichi Chai", "Cardamom chai, lightly sweet.", 4500, "🫖", true],
 
   ["Cold Drinks", "Cold Coffee", "Blended with vanilla ice cream, chocolate on top.", 14000, "🥤", true],
   ["Cold Drinks", "Iced Americano", "Long black over ice.", 12000, "🧊", true],
