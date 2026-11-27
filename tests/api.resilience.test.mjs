@@ -260,7 +260,8 @@ test("the cart key stays scoped to both the café and the table", async () => {
   const source = await readFile(new URL("../src/pages/Menu.jsx", import.meta.url), "utf8");
 
   assert.match(source, /`cart:\$\{cafeKey\}/, "the cart key is scoped by café");
-  assert.match(source, /table-\$\{tableId\}/, "the cart key is scoped by table");
+  // activeTable is the table the order is for (tableId, or none in a counter café).
+  assert.match(source, /table-\$\{(tableId|activeTable)\}/, "the cart key is scoped by table");
   assert.match(source, /takeaway/, "a table-less order keeps its own basket");
 });
 

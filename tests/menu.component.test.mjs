@@ -568,3 +568,29 @@ test("a café with no menu items says the menu is not available yet instead of a
     await page.unmount();
   }
 });
+
+test("a counter cafe opened through an old table link takes a pickup order with no table", async () => {
+  // Table QR codes printed before a café switched to counter service still open /t/<n>. The server
+  // rejects a tableId for a counter café, so the page must neither ask for the table nor send it.
+  const page = await mount("/c/pick-c1/t/2", { "pick-c1": "counter" });
+  try {
+    await page.flush();
+    const menuCalls = page.calls.filter((url) => /\/menu(\?|$)/.test(url));
+    assert.ok(menuCalls.length > 0, "the menu was requested");
+    assert.ok(menuCalls.every((url) => !url.includes("table=")), `no table in the menu request: ${menuCalls.join(", ")}`);
+    assert.match(page.text(), /Pickup/);
+
+    const place = await openCheckout(page, "pick-c1");
+    assert.doesNotMatch(page.text(), /Table 2/, "no table label anywhere");
+    assert.match(page.text(), /Pickup order/);
+
+    await page.click(place);
+    const post = page.requests.find((r) => r.method === "POST");
+    assert.ok(post, "the checkout was submitted");
+    const body = JSON.parse(post.body);
+    assert.equal("tableId" in body, false, "a pickup order carries no table");
+    assert.equal(window.location.pathname, "/c/pick-c1/order/ord-1", "the confirmation is a pickup order page");
+  } finally {
+    await page.unmount();
+  }
+});

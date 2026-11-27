@@ -24,12 +24,20 @@ export default function Menu() {
   const queryTable = search.get("table");
   const linkTable = routeTable || queryTable;
   const cafeKey = cafeSlug() || "cafe";
+  const { config, error: configError, retry: retryConfig } = useSiteConfigState();
+  const cafe = cafeName(config);
+  // Set by the café (SERVICE_MODE=counter): no table to scan, the guest gets a pickup number instead.
+  const counterService = Boolean(config && config.service && config.service.mode === "counter");
   // Tables are remembered per café: two outlets sharing a browser must never borrow each other's table.
   const tableStorageKey = `cafe_table:${cafeKey}`;
   // The QR code carries the table in the path; ?table=N is accepted too. Either way it is kept for
   // the session, so a refresh or a detour to a policy page doesn't lose the table before checkout.
   // Only the URL is trusted up front — a remembered table is restored after the service mode is known.
   const [tableId, setTableId] = useState(() => (linkTable ? String(linkTable) : ""));
+  // The table this order is for. Always empty in a counter café: a table QR printed before the café
+  // switched to pickup still opens /t/<n>, and the server rejects a tableId for a counter café, so such a
+  // visit becomes a plain pickup order (no table in the menu request, the checkout, the cart or the link).
+  const activeTable = counterService ? "" : tableId;
   // A menu or table list is tagged with what it was fetched for, so one café's answer can never be
   // rendered under another café's header — not even in the frame before the new request lands.
   const [menuState, setMenuState] = useState({ scope: null, data: null });
@@ -42,7 +50,7 @@ export default function Menu() {
   const [menuAttempt, setMenuAttempt] = useState(0);
   // The basket key follows the table, or "takeaway" for a counter-service café, so the two flows
   // can share a browser without mixing their carts.
-  const cartKey = `cart:${cafeKey}:${tableId ? `table-${tableId}` : "takeaway"}`;
+  const cartKey = `cart:${cafeKey}:${activeTable ? `table-${activeTable}` : "takeaway"}`;
   // Every key keeps its own basket, and writes go back to the key they were read from, so a table or
   // café change can neither copy one basket into another nor clear the one left behind.
   const [carts, setCarts] = useState(() => ({ [cartKey]: readCart(cartKey) }));
@@ -75,10 +83,6 @@ export default function Menu() {
     const path = cafePath(table ? `/t/${table}/order/${order.id}` : `/order/${order.id}`);
     return token ? `${path}#t=${encodeURIComponent(token)}` : path;
   }
-  const { config, error: configError, retry: retryConfig } = useSiteConfigState();
-  const cafe = cafeName(config);
-  // Set by the café (SERVICE_MODE=counter): no table to scan, the guest gets a pickup number instead.
-  const counterService = Boolean(config && config.service && config.service.mode === "counter");
   // In-app navigation to another café must not carry the previous café's table along. This is adjusted
   // during render rather than in an effect on purpose: an effect runs after the commit, which leaves one
   // render in which the new café is asked for the previous café's table — and the server answers an
@@ -98,7 +102,7 @@ export default function Menu() {
 
   // Everything a menu request depends on, as one value. It is the effect's dependency, so changing
   // café refetches even when the table number and the service mode stay identical.
-  const menuScopeKey = menuScope({ cafeKey, tableId, counterService });
+  const menuScopeKey = menuScope({ cafeKey, tableId: activeTable, counterService });
   const data = isCurrentScope(menuState.scope, menuScopeKey) ? menuState.data : null;
   const tables = isCurrentScope(tablesState.scope, cafeKey) ? tablesState.rows : [];
   // A café that exists but has not added any items yet. Without this the page rendered its header over
@@ -162,11 +166,15 @@ export default function Menu() {
     navigate(cafePath(`/t/${id}`));
   };
 
+  // Waits for the café's settings, like the table list above: until the service mode is known, a counter
+  // café opened through an old table link would be asked for that table, which it may not have.
+  const configSettled = Boolean(config || configError);
   useEffect(() => {
-    if (!tableId && !counterService) return undefined;
+    if (!configSettled) return undefined;
+    if (!activeTable && !counterService) return undefined;
     let alive = true;
     setError("");
-    api(tableId ? `/api/menu?table=${encodeURIComponent(tableId)}` : "/api/menu")
+    api(activeTable ? `/api/menu?table=${encodeURIComponent(activeTable)}` : "/api/menu")
       .then((payload) => {
         if (alive) setMenuState({ scope: menuScopeKey, data: payload });
       })
@@ -176,7 +184,7 @@ export default function Menu() {
     return () => {
       alive = false;
     };
-  }, [menuScopeKey, menuAttempt]);
+  }, [menuScopeKey, menuAttempt, configSettled]);
 
   // Scroll-spy for the category rail. A section is "current" when its top has passed just under the
   // sticky rail, which is what the guest's eye uses too. A plain scroll listener is deliberate: it works
@@ -259,7 +267,7 @@ export default function Menu() {
   };
 
   // Scoped like the cart, so two tables sharing one browser never share a checkout key.
-  const checkoutKey = checkoutStorageKey(cafeSlug(), tableId);
+  const checkoutKey = checkoutStorageKey(cafeSlug(), activeTable);
 
   // The café's own config decides the rail: online only when this deployment reports a live gateway,
   // otherwise pay-at-counter. Never a hardcoded default — see src/lib/payments.js.
@@ -269,7 +277,7 @@ export default function Menu() {
   const orderingClosed = Boolean(config && config.ordering && config.ordering.available === false);
 
   const buildCheckoutPayload = () => ({
-    ...(tableId ? { tableId: Number(tableId) } : {}),
+    ...(activeTable ? { tableId: Number(activeTable) } : {}),
     note,
     paymentMethod: checkoutPaymentMethod(config),
     items: lines.map((line) => ({ itemId: line.item.id, qty: line.qty })).sort((a, b) => a.itemId - b.itemId),
@@ -289,7 +297,7 @@ export default function Menu() {
 
   const placeOrder = async () => {
     setPlaceError("");
-    if (!tableId && !counterService) {
+    if (!activeTable && !counterService) {
       setPlaceError("Pick your table first — the kitchen needs to know where to bring it.");
       return;
     }
@@ -337,7 +345,7 @@ export default function Menu() {
       setCart({});
       setNote("");
       setSheetOpen(false);
-      navigate(orderLink(payload.order, payload.trackToken, tableId));
+      navigate(orderLink(payload.order, payload.trackToken, activeTable));
     } catch (err) {
       // A key the server has tied to another payload can never be ours again.
       if (err && (err.code === "idempotency_key_reused" || err.code === "checkout_abandoned")) {
@@ -404,7 +412,7 @@ export default function Menu() {
     );
   }
 
-  if (!tableId && !counterService) {
+  if (!activeTable && !counterService) {
     return (
       <main className="page-narrow">
         <div className="state-card">
@@ -443,7 +451,7 @@ export default function Menu() {
           <h1>Menu</h1>
         </div>
         <div className="table-badge">
-          <span>{counterService ? "Pickup" : data && data.table ? data.table.label : `Table ${tableId}`}</span>
+          <span>{counterService ? "Pickup" : data && data.table ? data.table.label : `Table ${activeTable}`}</span>
           <small>{counterService ? "Counter service" : "Dine-in"}</small>
         </div>
       </header>
@@ -601,7 +609,7 @@ export default function Menu() {
           <button
             type="button"
             onClick={() =>
-              navigate(orderLink(resolvedOrder, resolvedOrder.trackToken, tableId))
+              navigate(orderLink(resolvedOrder, resolvedOrder.trackToken, activeTable))
             }
           >
             Open order #{resolvedOrder.id}
@@ -623,7 +631,7 @@ export default function Menu() {
         payOnline={payOnline}
         orderingClosed={orderingClosed}
         orderingClosedMessage={ORDERING_CLOSED_MESSAGE}
-        tableLabel={counterService ? "Pickup order" : data && data.table ? data.table.label : `Table ${tableId}`}
+        tableLabel={counterService ? "Pickup order" : data && data.table ? data.table.label : `Table ${activeTable}`}
       />
     </main>
   );
