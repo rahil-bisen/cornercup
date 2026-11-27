@@ -2,11 +2,13 @@ name: ci
 
 # Every check runs against disposable local harness databases. No production secret, no Cloudflare
 # credential and no deployment step belongs in this file: CI proves the code, it does not ship it.
+# The repository's default branch is freebuff/qr-code-cafe-ordering-website, not main, so it is listed
+# explicitly: with only `main` here CI never ran on a push or on a pull request into the default branch.
 on:
   push:
-    branches: [main]
+    branches: [main, freebuff/qr-code-cafe-ordering-website]
   pull_request:
-    branches: [main]
+    branches: [main, freebuff/qr-code-cafe-ordering-website]
   workflow_dispatch:
 
 permissions:

@@ -181,6 +181,26 @@ test("before the config arrives the page shows loading, not a generic café", as
   }
 });
 
+test("an unknown café shows 'Café not found', never a generic café page", async () => {
+  const slug = "demo-01";
+  const page = await mount(slug, (rest) =>
+    rest.startsWith("config") ? fail(404, "No café found at that web address.") : fail(404, "No café found at that web address.")
+  );
+  try {
+    assert.match(page.text(), /Café not found/);
+    assert.match(page.text(), /demo-01/, "the address the guest typed is shown back to them");
+    assert.ok(page.container.querySelector('[role="alert"]'), "the message is announced");
+    // A missing café will not appear on a retry, so no Try again button and no generic café copy.
+    assert.equal(
+      [...page.container.querySelectorAll("button")].filter((b) => /Try again/.test(b.textContent)).length,
+      0
+    );
+    assert.doesNotMatch(page.text(), /Dine-in|Order without the wait|Which table|UPI|wallet/i);
+  } finally {
+    await page.unmount();
+  }
+});
+
 test("a failed config load shows the error and Try again recovers", async () => {
   const slug = "flaky-config";
   let configCalls = 0;

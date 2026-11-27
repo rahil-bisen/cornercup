@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, cafePath, cafeSlug } from "../lib/api.js";
-import { cafeName, useSiteConfigState } from "../lib/config.js";
+import { cafeName, isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import CafeNotFound from "../components/CafeNotFound.jsx";
 import { isCurrentScope, menuScope } from "../lib/menuScope.js";
 import { resolveItemImage } from "../lib/menuImages.js";
 import { money } from "../lib/money.js";
@@ -100,6 +101,9 @@ export default function Menu() {
   const menuScopeKey = menuScope({ cafeKey, tableId, counterService });
   const data = isCurrentScope(menuState.scope, menuScopeKey) ? menuState.data : null;
   const tables = isCurrentScope(tablesState.scope, cafeKey) ? tablesState.rows : [];
+  // A café that exists but has not added any items yet. Without this the page rendered its header over
+  // an empty body, which reads as broken rather than "not ready".
+  const menuEmpty = Boolean(data && !data.categories.some((category) => category.items.length > 0));
 
   // A table in the URL is the guest's explicit choice, so it beats anything remembered, and it is
   // remembered for this café only. A counter café has no tables, so it stores nothing.
@@ -260,6 +264,9 @@ export default function Menu() {
   // The café's own config decides the rail: online only when this deployment reports a live gateway,
   // otherwise pay-at-counter. Never a hardcoded default — see src/lib/payments.js.
   const payOnline = gatewayEnabled(config);
+  // The server reports when it cannot take an order (no tracking key configured). Only an explicit
+  // `false` closes checkout, so a config from an older Worker without the field keeps ordering open.
+  const orderingClosed = Boolean(config && config.ordering && config.ordering.available === false);
 
   const buildCheckoutPayload = () => ({
     ...(tableId ? { tableId: Number(tableId) } : {}),
@@ -284,6 +291,10 @@ export default function Menu() {
     setPlaceError("");
     if (!tableId && !counterService) {
       setPlaceError("Pick your table first — the kitchen needs to know where to bring it.");
+      return;
+    }
+    if (orderingClosed) {
+      setPlaceError(ORDERING_CLOSED_MESSAGE);
       return;
     }
     setPlacing(true);
@@ -342,6 +353,7 @@ export default function Menu() {
   // itself comes first: until /api/config answers there is nothing to show a table picker for, and two
   // banners (tables + config) used to stack in the same card with two identical retries.
   const cafeFailed = Boolean(configError && !config);
+  if (cafeFailed && isCafeNotFound(configError)) return <CafeNotFound />;
   const failure = cafeFailed
     ? {
         title: "We couldn't open this menu",
@@ -371,6 +383,22 @@ export default function Menu() {
           <Link className="btn ghost" to={cafePath("")}>
             Back to the start
           </Link>
+        </div>
+      </main>
+    );
+  }
+
+  // Until the café's settings arrive its name and service mode are unknown. Rendering anyway would show
+  // the generic "Café" with a "Dine-in" badge, or ask a counter café's guest which table they are at,
+  // and then flip. A neutral loading card is shown instead, as on the landing page.
+  if (!config) {
+    return (
+      <main className="page-narrow">
+        <div className="state-card" aria-busy="true">
+          <span className="state-emoji" aria-hidden="true">
+            ☕
+          </span>
+          <p className="muted">Loading…</p>
         </div>
       </main>
     );
@@ -433,7 +461,20 @@ export default function Menu() {
         </>
       )}
 
-      {data && (
+      {data && menuEmpty && (
+        <div className="state-card" role="status">
+          <span className="state-emoji" aria-hidden="true">
+            📋
+          </span>
+          <h2>Menu not available yet</h2>
+          <p className="muted">
+            {cafe} hasn&apos;t put its menu online yet. Please order with our staff for now — thank you for your
+            patience.
+          </p>
+        </div>
+      )}
+
+      {data && !menuEmpty && (
         <>
           <div className="category-nav-wrap">
             <nav className="category-nav" aria-label="Menu categories">
@@ -580,11 +621,16 @@ export default function Menu() {
         placing={placing}
         error={placeError}
         payOnline={payOnline}
+        orderingClosed={orderingClosed}
+        orderingClosedMessage={ORDERING_CLOSED_MESSAGE}
         tableLabel={counterService ? "Pickup order" : data && data.table ? data.table.label : `Table ${tableId}`}
       />
     </main>
   );
 }
+
+const ORDERING_CLOSED_MESSAGE =
+  "Ordering from your phone isn't available right now. Please order with our staff at the counter.";
 
 function RetryNotice({ message, onRetry }) {
   return (

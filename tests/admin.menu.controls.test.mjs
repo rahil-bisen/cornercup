@@ -390,3 +390,16 @@ function cssMedia(css, condition) {
   }
   return null;
 }
+
+test("each sold-out switch names the item it controls and reports its state", async () => {
+  const page = await mount();
+  try {
+    for (const [itemId, name] of [[1, "Masala Chai"], [2, "Filter Coffee"]]) {
+      const toggle = page.row(itemId).querySelector(".switch");
+      assert.equal(toggle.getAttribute("aria-label"), `${name} available`);
+      assert.equal(toggle.getAttribute("aria-pressed"), "true");
+    }
+  } finally {
+    await page.unmount();
+  }
+});

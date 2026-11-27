@@ -223,3 +223,28 @@ test("an unpaid razorpay order still offers the gateway, and charges nothing unt
     await page.unmount();
   }
 });
+
+test("once staff take payment at the counter the guest sees it as paid", async () => {
+  // Staff "Payment received" sets payment_status 'counter' AND paid_at; a guest who only chose to pay at
+  // the counter gets 'counter' without paid_at and still owes the bill.
+  const paid = { ...ORDER, paymentMethod: "counter", paymentStatus: "counter", paidAt: "2026-11-27T10:30:00.000Z" };
+  const page = await mount(`http://localhost/c/counter-cafe/t/1/order/ABC123#t=${TOKEN}`, () => reply({ order: paid }));
+  try {
+    await settle();
+    assert.match(page.text(), /Paid at the counter/);
+    assert.match(page.text(), /Payment received/);
+    assert.doesNotMatch(page.text(), /Pay at the counter/);
+  } finally {
+    await page.unmount();
+  }
+
+  const owed = { ...ORDER, paymentMethod: "counter", paymentStatus: "counter", paidAt: null };
+  const second = await mount(`http://localhost/c/counter-cafe/t/1/order/ABC123#t=${TOKEN}`, () => reply({ order: owed }));
+  try {
+    await settle();
+    assert.match(second.text(), /Pay at the counter/, "choosing the counter is not the same as having paid");
+    assert.doesNotMatch(second.text(), /Payment received/);
+  } finally {
+    await second.unmount();
+  }
+});

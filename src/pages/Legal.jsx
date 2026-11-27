@@ -1,7 +1,9 @@
 import { Link, Navigate, useParams } from "react-router-dom";
 import SiteFooter from "../components/SiteFooter.jsx";
 import { cafePath } from "../lib/api.js";
-import { useSiteConfig } from "../lib/config.js";
+import { isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import CafeNotFound from "../components/CafeNotFound.jsx";
+import { gatewayEnabled } from "../lib/payments.js";
 
 // Contact details come from the staff panel (Café setup). The placeholders stay visible on purpose
 // until the owner fills them in: Razorpay's website review looks for real details on exactly these
@@ -16,15 +18,19 @@ function businessDetails(config) {
   };
 }
 
-function pagesFor({ name, address, phone, email }) {
+// `online` is true only when this café has a live payment gateway. Without one, money is taken in
+// person, so these pages must not describe a gateway the guest will never see.
+function pagesFor({ name, address, phone, email }, online) {
   return {
     about: {
       title: "About us",
       body: (
         <>
           <p>
-            {name} is a café at {address}. Order straight from your phone and pay without waiting for
-            someone to take your order.
+            {name} is a café at {address}.{" "}
+            {online
+              ? "Order straight from your phone and pay without waiting for someone to take your order."
+              : "Order straight from your phone without waiting for someone to take your order, then pay at the counter."}
           </p>
           <p>
             Food is prepared to order in our kitchen. We keep a small menu, change it with the season,
@@ -98,11 +104,18 @@ function pagesFor({ name, address, phone, email }) {
             if the table or pickup number cannot be verified, or if a payment cannot be confirmed.
           </p>
           <h2>Payment</h2>
-          <p>
-            Payments are processed by our payment gateway. We never see or store your card, UPI PIN or
-            bank credentials. An order is only treated as paid once the gateway confirms the payment to
-            us.
-          </p>
+          {online ? (
+            <p>
+              Payments are processed by our payment gateway. We never see or store your card, UPI PIN or
+              bank credentials. An order is only treated as paid once the gateway confirms the payment to
+              us.
+            </p>
+          ) : (
+            <p>
+              Payment is taken in person at the counter. An order is only treated as paid once our staff
+              confirm they have received the payment.
+            </p>
+          )}
           <h2>Dine-in and pickup</h2>
           <p>
             Menu prices can change without notice; the amount shown when you confirm your order is the
@@ -127,20 +140,27 @@ function pagesFor({ name, address, phone, email }) {
         <>
           <p>
             {name} collects the minimum needed to serve you: the table or pickup number, the items you
-            order, the amount, and — when you pay online — the payment reference returned by our
-            payment gateway.
+            order{online ? ", the amount, and — when you pay online — the payment reference returned by our payment gateway." : " and the amount."}
           </p>
           <h2>What we do not collect</h2>
           <p>
             We do not ask for your name, email, phone number or address to place an order, and we never
-            receive your card number or UPI PIN. Those stay with the payment gateway and your bank.
+            receive your card number or UPI PIN.
+            {online ? " Those stay with the payment gateway and your bank." : ""}
           </p>
           <h2>Payments</h2>
-          <p>
-            Online payments are processed by our payment gateway under its own privacy policy. We
-            receive only a confirmation, an amount and a payment identifier so we can match the payment
-            to your order.
-          </p>
+          {online ? (
+            <p>
+              Online payments are processed by our payment gateway under its own privacy policy. We
+              receive only a confirmation, an amount and a payment identifier so we can match the payment
+              to your order.
+            </p>
+          ) : (
+            <p>
+              Payments are taken in person at the counter. We record only that your order was paid, so
+              we can match the payment to your order.
+            </p>
+          )}
           <h2>Retention</h2>
           <p>
             Order records are kept for accounting and dispute resolution, then deleted. We do not sell
@@ -170,10 +190,17 @@ function pagesFor({ name, address, phone, email }) {
             <li>The amount charged does not match the amount shown when you ordered.</li>
           </ul>
           <h2>How refunds are paid</h2>
-          <p>
-            Refunds go back to the original payment method through our payment gateway. We initiate
-            them within 2 working days; your bank typically credits the amount in 5–7 working days.
-          </p>
+          {online ? (
+            <p>
+              Refunds go back to the original payment method through our payment gateway. We initiate
+              them within 2 working days; your bank typically credits the amount in 5–7 working days.
+            </p>
+          ) : (
+            <p>
+              Refunds are made at the counter, in the same way you paid. If you have already left, contact
+              us and we will arrange it.
+            </p>
+          )}
           <h2>What we cannot refund</h2>
           <p>
             Food already prepared and served, and orders cancelled after preparation has started, are
@@ -182,7 +209,7 @@ function pagesFor({ name, address, phone, email }) {
           </p>
           <h2>Requesting a refund</h2>
           <p>
-            Call {phone} or email {email} with your order number and the payment reference. {name},{" "}
+            Call {phone} or email {email} with your order number{online ? " and the payment reference" : ""}. {name},{" "}
             {address}.
           </p>
         </>
@@ -196,11 +223,26 @@ export default function Legal({ page: fixedPage }) {
   // policy page that does not exist.
   const params = useParams();
   const page = fixedPage || params.legal;
-  const config = useSiteConfig();
+  const { config, error } = useSiteConfigState();
   const details = businessDetails(config);
-  const pages = pagesFor(details);
+  const pages = pagesFor(details, gatewayEnabled(config));
   if (!pages[page]) return <Navigate to={cafePath("")} replace />;
   const content = pages[page];
+
+  // A policy page for a café that does not exist would only be placeholders for nobody.
+  if (isCafeNotFound(error)) return <CafeNotFound />;
+
+  // While the café's details are on their way, the "[Business Name]" placeholders would flash before
+  // the real name, and the payment wording could flip. If the config fails to load, the page still
+  // renders with the placeholders, so a policy page is never stuck on a spinner.
+  if (!config && !error) {
+    return (
+      <main className="legal-page" aria-busy="true">
+        <h1>{content.title}</h1>
+        <p className="muted">Loading…</p>
+      </main>
+    );
+  }
 
   return (
     <main className="legal-page">

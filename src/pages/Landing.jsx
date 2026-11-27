@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, cafePath } from "../lib/api.js";
-import { cafeName, useSiteConfigState } from "../lib/config.js";
+import { cafeName, isCafeNotFound, useSiteConfigState } from "../lib/config.js";
 import { gatewayEnabled } from "../lib/payments.js";
+import CafeNotFound from "../components/CafeNotFound.jsx";
 import SiteFooter from "../components/SiteFooter.jsx";
 
 // The first screen a guest sees after scanning a table QR code, so it is built mobile-first:
@@ -40,6 +41,7 @@ export default function Landing() {
   // Until the café's settings arrive we don't know its name, service style or payment options, so we
   // show a neutral placeholder instead of guessing ("Café", "Dine-in") and then flipping.
   if (!config) {
+    if (isCafeNotFound(configError)) return <CafeNotFound />;
     if (configError) {
       return (
         <main className="page-narrow">

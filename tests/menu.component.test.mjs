@@ -96,6 +96,14 @@ function respond(url, modes, init = {}) {
   const entry = modes && modes[slug];
   const mode = typeof entry === "string" ? entry : (entry && entry.mode) || "tables";
   const gateway = Boolean(entry && typeof entry === "object" && entry.gateway === true);
+  // `ordering: false` mimics a Worker with no tracking key, which reports that it cannot take orders;
+  // `ordering: "omit"` mimics an older Worker that never sent the field at all.
+  const ordering = entry && typeof entry === "object" ? entry.ordering : undefined;
+
+  // `"missing"` mimics a slug with no café behind it: the Worker answers every scoped route with 404.
+  if (entry === "missing") {
+    return { ok: false, status: 404, text: async () => JSON.stringify({ error: "No café found at that web address." }) };
+  }
 
   if (rest.startsWith("config")) {
     return json({
@@ -103,6 +111,7 @@ function respond(url, modes, init = {}) {
       slug,
       cafe: { name: `CAFE-${slug}` },
       service: { mode },
+      ...(ordering === "omit" ? {} : { ordering: { available: ordering !== false } }),
       payments: { provider: gateway ? "razorpay" : "none", gateway, keyId: gateway ? "rzp_test_key" : null },
     });
   }
@@ -126,6 +135,10 @@ function respond(url, modes, init = {}) {
     });
   }
   if (rest.startsWith("menu")) {
+    // `menu: "empty"` mimics a café that exists but has not added any items yet.
+    if (entry && typeof entry === "object" && entry.menu === "empty") {
+      return json({ table: { label: "Table 1" }, categories: [] });
+    }
     return json({
       table: { label: "Table" },
       categories: [
@@ -390,6 +403,31 @@ test("counter service → table service: the new café's table menu is requested
   }
 });
 
+for (const pathname of ["/c/slow-m1/t/2", "/c/slow-m2"]) {
+  test(`${pathname}: before the config arrives the menu shows loading, not a generic café`, async () => {
+    const slug = pathname.split("/")[2];
+    const heldUrl = `/api/cafes/${slug}/config`;
+    const page = await mount(pathname, { [slug]: "counter" }, [heldUrl]);
+    try {
+      await page.flush();
+      assert.match(page.text(), /Loading/);
+      // Neither the "Café" fallback nor a service-mode guess may show while the mode is unknown.
+      assert.doesNotMatch(page.text(), /Café|Dine-in|Pickup|Which table/i);
+      assert.ok(page.container.querySelector('[aria-busy="true"]'));
+
+      page.release(heldUrl);
+      await page.flush();
+      await page.flush();
+      assert.match(page.text(), new RegExp(`CAFE-${slug}`));
+      assert.match(page.text(), /Pickup/);
+      assert.doesNotMatch(page.text(), /Dine-in|Which table/);
+    } finally {
+      page.release(heldUrl);
+      await page.unmount();
+    }
+  });
+}
+
 // --- Stage 9A: the declared payment rail comes from the cafe's own config ---------------------
 
 async function openCheckout(page, slug) {
@@ -450,6 +488,32 @@ test("a table cafe with no gateway submits 'counter' and keeps its table", async
   }
 });
 
+test("a deployment that cannot take orders says so in the cart and never sends a doomed checkout", async () => {
+  const page = await mount("/c/closed-c1", { "closed-c1": { mode: "counter", ordering: false } });
+  try {
+    const place = await openCheckout(page, "closed-c1");
+    assert.match(page.text(), /Ordering from your phone isn't available right now/);
+    assert.equal(place.disabled, true, "the send button is disabled");
+
+    await page.click(place);
+    assert.equal(page.requests.filter((r) => r.method === "POST").length, 0, "no order was submitted");
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a config without the ordering field keeps checkout open", async () => {
+  // An older Worker never sends `ordering`; only an explicit `available: false` may close checkout.
+  const page = await mount("/c/legacy-c1", { "legacy-c1": { mode: "counter", ordering: "omit" } });
+  try {
+    const place = await openCheckout(page, "legacy-c1");
+    assert.doesNotMatch(page.text(), /isn't available right now/);
+    assert.equal(place.disabled, false);
+  } finally {
+    await page.unmount();
+  }
+});
+
 test("a cafe with a live gateway keeps the Razorpay checkout", async () => {
   const page = await mount("/c/pay-c2", { "pay-c2": { mode: "counter", gateway: true } });
   try {
@@ -467,6 +531,39 @@ test("a cafe with a live gateway keeps the Razorpay checkout", async () => {
     assert.deepEqual(body.items, [{ itemId: 1, qty: 1 }]);
     // The panel is on the order page, not here: nothing may be charged from the cart.
     assert.equal(page.requests.filter((r) => /\/payment/.test(r.url)).length, 0);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("an unknown café shows 'Café not found' instead of a menu or a retry loop", async () => {
+  const page = await mount("/c/demo-01/t/1", { "demo-01": "missing" });
+  try {
+    await page.flush();
+    await page.flush();
+    assert.match(page.text(), /Café not found/);
+    assert.match(page.text(), /demo-01/);
+    assert.ok(page.container.querySelector('[role="alert"]'));
+    assert.equal(
+      [...page.container.querySelectorAll("button")].filter((b) => /Try again/.test(b.textContent)).length,
+      0,
+      "a missing café will not appear on a retry"
+    );
+    assert.doesNotMatch(page.text(), /Dine-in|Which table|Table 1/);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a café with no menu items says the menu is not available yet instead of a blank page", async () => {
+  const page = await mount("/c/empty-m1/t/1", { "empty-m1": { mode: "tables", menu: "empty" } });
+  try {
+    await page.flush();
+    assert.match(page.text(), /Menu not available yet/);
+    assert.match(page.text(), /CAFE-empty-m1/, "the café's own name stays in the header");
+    assert.ok(page.container.querySelector('[role="status"]'), "the message is announced");
+    assert.equal(page.container.querySelector(".category-nav"), null, "no empty category rail");
+    assert.equal(page.container.querySelector(".cart-bar"), null);
   } finally {
     await page.unmount();
   }

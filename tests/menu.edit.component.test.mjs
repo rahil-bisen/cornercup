@@ -236,6 +236,26 @@ test("the Edit button opens a form filled with the item's current values", async
   }
 });
 
+test("opening the editor brings it into view and puts the cursor in the Name field", async () => {
+  // The editor sits below the whole menu; without this, pressing Edit on a long menu looked like nothing
+  // happened because the form opened far below the screen.
+  const scrolled = [];
+  const original = window.HTMLElement.prototype.scrollIntoView;
+  window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {
+    scrolled.push(this);
+  };
+  const page = await mount();
+  try {
+    const form = await openEditor(page);
+    await flush();
+    assert.ok(scrolled.includes(form), "the edit form is scrolled into view");
+    assert.equal(window.document.activeElement, field(form, "Name").querySelector("input"));
+  } finally {
+    window.HTMLElement.prototype.scrollIntoView = original;
+    await page.unmount();
+  }
+});
+
 /* ------------------------------------------------------------------ saving sends the edit */
 
 test("saving sends one CSRF-protected PATCH with every edited field", async () => {

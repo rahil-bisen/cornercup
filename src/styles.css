@@ -1086,6 +1086,17 @@ button {
   font-size: 1.05rem;
 }
 
+/* Holds the café name's place while the config loads, so the header does not jump when it lands. */
+.admin-brand-loading {
+  display: block;
+  width: 9rem;
+}
+
+.admin-brand-loading .skeleton-line {
+  display: block;
+  height: 14px;
+}
+
 .admin-top-actions {
   display: flex;
   gap: 8px;
