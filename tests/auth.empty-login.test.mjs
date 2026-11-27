@@ -87,7 +87,7 @@ test("F-07: missing password returns 401 and updates the lockout counter", { ski
     assert.equal(res.status, 401, `missing password (${name}) must be 401, got ${res.status}`);
     assert.equal(
       (await res.json()).error,
-      "That password doesn't match.",
+      "Incorrect password. Please try again.",
       `missing password (${name}) must return the standard 401 message`
     );
     assert.equal(
@@ -104,7 +104,7 @@ test("F-07: whitespace-only password returns 401 and updates the lockout counter
   const address = ip();
   const res = await login(cafe.slug, JSON.stringify({ password: "   " }), address);
   assert.equal(res.status, 401);
-  assert.equal((await res.json()).error, "That password doesn't match.");
+  assert.equal((await res.json()).error, "Incorrect password. Please try again.");
   assert.equal(await rateKeyCount(cafe.cafeId, address), 1, "a whitespace-only attempt increments the counter");
 });
 
@@ -119,7 +119,7 @@ test("F-07: bad passwords still count toward lockout, valid password still works
     expected += 1;
     const res = await login(cafe.slug, JSON.stringify({ password: wrong }), address);
     assert.equal(res.status, 401, `wrong password "${wrong}" must be 401`);
-    assert.equal((await res.json()).error, "That password doesn't match.");
+    assert.equal((await res.json()).error, "Incorrect password. Please try again.");
     assert.equal(await rateKeyCount(cafe.cafeId, address), expected, `"${wrong}" counted toward lockout`);
   }
 
@@ -139,7 +139,8 @@ test("F-07: source-level guard is present at the right point", async () => {
   assert.ok(/if\s*\(!attempt\)\s*\{/.test(api), "the source carries an explicit empty-attempt guard");
   assert.ok(
     /touchRateLimit\(env,\s*lockoutKey,\s*LOGIN_MAX_FAILURES/.test(api) &&
-      api.includes("That password doesn't match."),
+      api.includes('const SIGNIN_WRONG_PASSWORD = "Incorrect password. Please try again.";') &&
+      /if\s*\(!attempt\)\s*\{[\s\S]*?return json\(\{ error: SIGNIN_WRONG_PASSWORD/.test(api),
     "the guard updates the lockout counter and returns the standard 401 message"
   );
 });

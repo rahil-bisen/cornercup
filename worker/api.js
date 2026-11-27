@@ -616,13 +616,13 @@ async function operatorApi(request, env, path) {
 async function operatorLogin(request, env) {
   // Same secret signs operator sessions, so the console stays closed without it.
   if (!env.ADMIN_SECRET) {
-    return json({ error: "The operator console isn't configured on this deployment." }, 503);
+    return signinNotSetUp();
   }
 
   // Trim so a secret pasted with stray whitespace still matches what the user types.
   const expected = String(env.OPERATOR_PASSWORD || "").trim();
   if (!expected) {
-    return json({ error: "The operator password isn't configured for this deployment." }, 503);
+    return signinNotSetUp();
   }
 
   const ipHash = await clientIpHash(request);
@@ -636,7 +636,7 @@ async function operatorLogin(request, env) {
     return json({ error: "The operator console isn't available right now. Please try again." }, 503);
   }
   if (current.count >= LOGIN_MAX_FAILURES && current.expires > Date.now()) {
-    return json({ error: "Too many attempts. Please try again in a few minutes." }, 429);
+    return signinLockedOut(current.expires);
   }
 
   const body = await readJson(request, BODY_LIMITS.operatorLogin);
@@ -649,7 +649,7 @@ async function operatorLogin(request, env) {
       console.error("Operator login lockout update failed", { error: err && err.message ? err.message : String(err) });
       return json({ error: "The operator console isn't available right now. Please try again." }, 503);
     }
-    return json({ error: "That password doesn't match." }, 401);
+    return json({ error: SIGNIN_WRONG_PASSWORD, code: "wrong_password" }, 401);
   }
 
   try {
@@ -1912,6 +1912,35 @@ async function hmacHex(secret, message) {
 // in-memory implementation; only the storage moved to D1 so counters survive isolate restarts.
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 8;
+
+// Sign-in answers shared by the owner and operator pages, so both say the same thing for the same case.
+// None of them depends on which café was asked for: an unknown café is already a 404 on every café URL.
+const SIGNIN_WRONG_PASSWORD = "Incorrect password. Please try again.";
+const SIGNIN_NOT_SET_UP = "Sign-in isn't set up yet. Please contact support.";
+
+// A café without an owner password also tells the reader what has to happen, so support knows the fix.
+const SIGNIN_OWNER_NOT_SET =
+  "Sign-in isn't set up yet for this café. Please contact support — the operator needs to set an owner password.";
+
+function signinNotSetUp(message = SIGNIN_NOT_SET_UP) {
+  return json({ error: message, code: "signin_not_configured" }, 503);
+}
+
+// A locked-out sign-in says when it can be tried again, from the lockout row's own expiry, and sends the
+// standard Retry-After header. The lockout itself (count, window, key) is unchanged.
+function signinLockedOut(expires) {
+  const seconds = Math.max(1, Math.ceil((Number(expires) - Date.now()) / 1000));
+  const minutes = Math.ceil(seconds / 60);
+  return json(
+    {
+      error: `Too many attempts. Please try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`,
+      code: "signin_locked",
+      retryAfter: seconds,
+    },
+    429,
+    { "retry-after": String(seconds) }
+  );
+}
 const API_WINDOW_MS = 60 * 1000;
 // A ceiling, not a throttle: every guest in the café shares one public IP across the NAT, and the
 // order page polls while a ticket is open, so a low number would lock out a busy room.
@@ -2135,20 +2164,14 @@ async function login(request, env, cafe) {
   }
   // Sessions are signed with a deployment secret. A default would let anyone mint a staff session.
   if (!env.ADMIN_SECRET) {
-    return json({ error: "Staff sign-in isn't configured on this deployment." }, 503);
+    return signinNotSetUp();
   }
   // Every café signs in with its own stored hash. No deployment-wide fallback secret is consulted
   // here: one shared value used to open any café whose password was missing, and a short numeric pin
   // is not a password. An upgraded single-café install keeps its old password because the primary
   // café's hash is seeded once, at bootstrap (see worker/db.js).
   if (!cafe.pass_hash) {
-    return json(
-      {
-        error:
-          "This café hasn't set an owner password yet. Ask the operator to reset it from the operator console.",
-      },
-      503
-    );
+    return signinNotSetUp(SIGNIN_OWNER_NOT_SET);
   }
 
   const ipHash = await clientIpHash(request);
@@ -2162,7 +2185,7 @@ async function login(request, env, cafe) {
     return json({ error: "Staff sign-in isn't available right now. Please try again." }, 503);
   }
   if (current.count >= LOGIN_MAX_FAILURES && current.expires > Date.now()) {
-    return json({ error: "Too many attempts. Please try again in a few minutes." }, 429);
+    return signinLockedOut(current.expires);
   }
 
   // --- CRITICAL RACE FIX: Capture auth_version BEFORE password verification ---
@@ -2186,7 +2209,7 @@ async function login(request, env, cafe) {
       console.error("F-07 login lockout update failed", { error: err && err.message ? err.message : String(err) });
       return json({ error: "Staff sign-in isn't available right now. Please try again." }, 503);
     }
-    return json({ error: "That password doesn't match." }, 401);
+    return json({ error: SIGNIN_WRONG_PASSWORD, code: "wrong_password" }, 401);
   }
 
   // A legacy hash whose work factor this runtime cannot compute is a controlled reset, never a
@@ -2219,7 +2242,7 @@ async function login(request, env, cafe) {
       console.error("Login lockout update failed", { error: err && err.message ? err.message : String(err) });
       return json({ error: "Staff sign-in isn't available right now. Please try again." }, 503);
     }
-    return json({ error: "That password doesn't match." }, 401);
+    return json({ error: SIGNIN_WRONG_PASSWORD, code: "wrong_password" }, 401);
   }
 
   // --- OPPORTUNISTIC MIGRATION: after a successful legacy PBKDF2 verification, move the hash to
@@ -2408,7 +2431,7 @@ async function loginTotp(request, env, cafe) {
     );
   }
   if (!env.ADMIN_SECRET) {
-    return json({ error: "Staff sign-in isn't configured on this deployment." }, 503);
+    return signinNotSetUp();
   }
 
   const ipHash = await clientIpHash(request);
@@ -2421,7 +2444,7 @@ async function loginTotp(request, env, cafe) {
     return json({ error: "Staff sign-in isn't available right now. Please try again." }, 503);
   }
   if (current.count >= TOTP_ATTEMPTS_PER_WINDOW && current.expires > Date.now()) {
-    return json({ error: "Too many attempts. Please try again in a few minutes." }, 429);
+    return signinLockedOut(current.expires);
   }
 
   const body = await readJson(request, BODY_LIMITS.loginTotp);
