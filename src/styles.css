@@ -1534,6 +1534,11 @@ button {
   word-break: break-all;
 }
 
+/* .btn.primary is full-width by default; next to "Print sheet" the download button keeps its own size. */
+.counter-qr-tools .btn {
+  width: auto;
+}
+
 /* A counter café's single code: one larger card, sized to be read from a counter standee. */
 .counter-qr-card {
   max-width: 360px;

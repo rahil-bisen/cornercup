@@ -1652,7 +1652,7 @@ function CounterQrTab({ cafe }) {
         <p className="muted small">One code for the whole café — guests scan it to order for pickup</p>
       </div>
 
-      <div className="table-tools no-print">
+      <div className="table-tools counter-qr-tools no-print">
         <button type="button" className="btn ghost small-btn" onClick={() => window.print()}>
           Print sheet
         </button>
