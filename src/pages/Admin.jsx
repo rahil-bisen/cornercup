@@ -1071,6 +1071,17 @@ function MenuTab({ call, csrfToken }) {
   const savingRef = useRef(false);
   const [notice, setNotice] = useState("");
   const [editItem, setEditItem] = useState(null);
+  // The editor is rendered below the whole menu, so opening it must bring it on screen; otherwise Edit on
+  // a long menu looks like it did nothing. Focus goes to the first field for keyboard users.
+  const editFormRef = useRef(null);
+  const editingId = editItem ? editItem.id : null;
+  useEffect(() => {
+    if (editingId === null || !editFormRef.current) return;
+    const form = editFormRef.current;
+    if (typeof form.scrollIntoView === "function") form.scrollIntoView({ behavior: "smooth", block: "start" });
+    const first = form.querySelector("input");
+    if (first) first.focus({ preventScroll: true });
+  }, [editingId]);
   const [pendingImage, setPendingImage] = useState({});
   const [imageBusy, setImageBusy] = useState(null);
   // The picker itself is hidden, so it is opened by a real button. That keeps the control in the tab
@@ -1457,7 +1468,7 @@ function MenuTab({ call, csrfToken }) {
         ))}
 
       {editItem ? (
-        <form className="add-form" onSubmit={saveEdit}>
+        <form className="add-form" onSubmit={saveEdit} ref={editFormRef}>
           <h2>Edit item</h2>
           <p className="muted small">
             Save to update the customer menu and the price new orders pay. Orders already placed keep
