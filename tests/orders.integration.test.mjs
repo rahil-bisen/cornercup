@@ -159,3 +159,26 @@ test("T7: order-id exhaustion answers 503, releases the claim, and the retry suc
     await call("/clean", { cafeId: cafe.cafeId });
   }
 });
+
+test("T8: a counter café still rejects a tableId, and takes the same order as a pickup", { skip }, async () => {
+  // The menu no longer sends a table for a counter café opened through an old table link, but the server
+  // check stays: a table id for a pickup café is a mistake, never a hint.
+  const cafe = await call("/seed", { serviceMode: "counter" });
+  const items = [{ itemId: cafe.itemId, qty: 1 }];
+  try {
+    const key = crypto.randomUUID();
+    const rejected = await order(cafe, "/orders", JSON.stringify({ tableId: 1, note: "", paymentMethod: "counter", items }), key);
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).error, /pickup orders/);
+    const stored = await call("/read", { cafeId: cafe.cafeId, key });
+    assert.equal(stored.orders.length, 0, "nothing was written for the rejected checkout");
+
+    const accepted = await order(cafe, "/orders", JSON.stringify({ note: "", paymentMethod: "counter", items }), crypto.randomUUID());
+    assert.equal(accepted.status, 201);
+    const { order: created } = await accepted.json();
+    assert.ok(created.queueNo != null, "a pickup order gets a pickup number");
+    assert.equal(created.tableId, null);
+  } finally {
+    await call("/clean", { cafeId: cafe.cafeId });
+  }
+});
