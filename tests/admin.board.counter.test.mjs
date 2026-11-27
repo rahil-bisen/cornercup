@@ -200,3 +200,22 @@ test("a café with a live gateway keeps its paid-first board", async () => {
     await page.unmount();
   }
 });
+
+test("board wording: Served as the last step, honest payment labels and refresh interval", async () => {
+  const page = await mount("counter-words", {
+    config: async () => json(configFor("counter-words", false)),
+    orders: [order("D1", { status: "ready" }), order("D2", { paymentStatus: "counter", paidAt: new Date().toISOString() })],
+  });
+  try {
+    await page.flush();
+    const buttons = [...page.container.querySelectorAll("button")].map((b) => b.textContent.trim());
+    assert.ok(buttons.includes("Served"), `a ready order is moved on with "Served": ${buttons.join(", ")}`);
+    assert.ok(!buttons.includes("Done"));
+    assert.ok(buttons.includes("Payment received"), "staff mark card, cash or UPI the same way");
+    assert.ok(!buttons.includes("Cash received"));
+    assert.match(page.text(), /Paid at counter/, "a counter-paid order no longer reads as still to pay");
+    assert.match(page.text(), /refreshes every 10s/);
+  } finally {
+    await page.unmount();
+  }
+});

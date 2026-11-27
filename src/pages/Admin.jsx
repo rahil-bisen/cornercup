@@ -587,7 +587,7 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
   const columns = [
     { key: "new", title: "New", action: "Preparing", next: "preparing" },
     { key: "preparing", title: "Preparing", action: "Ready", next: "ready" },
-    { key: "ready", title: "Ready", action: "Done", next: "served" },
+    { key: "ready", title: "Ready", action: "Served", next: "served" },
   ];
 
   const matches = (order) => {
@@ -633,7 +633,7 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
             {arrived.length} new {arrived.length === 1 ? "order" : "orders"} · tap to clear
           </button>
         )}
-        <p className="muted small">Live · refreshes every 4s · {open.length} open</p>
+        <p className="muted small">Live · refreshes every {BOARD_POLL_MS / 1000}s · {open.length} open</p>
       </div>
 
       {stats && (
@@ -651,7 +651,7 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
             <em>Razorpay</em>
           </div>
           <div className="stat">
-            <span>Counter cash</span>
+            <span>At the counter</span>
             <strong>{money(stats.counterCents)}</strong>
             <em>marked by staff</em>
           </div>
@@ -773,7 +773,7 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
                           disabled={busy === order.id}
                           onClick={() => setPayment(order.id, "counter")}
                         >
-                          Cash received
+                          Payment received
                         </button>
                       )}
                     </div>
@@ -835,7 +835,7 @@ function PaymentChip({ order }) {
     unpaid: ["Unpaid", "unpaid"],
     submitted: ["Awaiting confirmation", "pending"],
     confirmed: ["Paid · Razorpay", "paid"],
-    counter: ["Pay at counter", "counter"],
+    counter: ["Paid at counter", "counter"],
     failed: ["Payment failed", "unpaid"],
   };
   const [label, tone] = labels[order.paymentStatus] || labels.unpaid;
