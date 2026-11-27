@@ -101,6 +101,9 @@ export default function Menu() {
   const menuScopeKey = menuScope({ cafeKey, tableId, counterService });
   const data = isCurrentScope(menuState.scope, menuScopeKey) ? menuState.data : null;
   const tables = isCurrentScope(tablesState.scope, cafeKey) ? tablesState.rows : [];
+  // A café that exists but has not added any items yet. Without this the page rendered its header over
+  // an empty body, which reads as broken rather than "not ready".
+  const menuEmpty = Boolean(data && !data.categories.some((category) => category.items.length > 0));
 
   // A table in the URL is the guest's explicit choice, so it beats anything remembered, and it is
   // remembered for this café only. A counter café has no tables, so it stores nothing.
@@ -458,7 +461,20 @@ export default function Menu() {
         </>
       )}
 
-      {data && (
+      {data && menuEmpty && (
+        <div className="state-card" role="status">
+          <span className="state-emoji" aria-hidden="true">
+            📋
+          </span>
+          <h2>Menu not available yet</h2>
+          <p className="muted">
+            {cafe} hasn&apos;t put its menu online yet. Please order with our staff for now — thank you for your
+            patience.
+          </p>
+        </div>
+      )}
+
+      {data && !menuEmpty && (
         <>
           <div className="category-nav-wrap">
             <nav className="category-nav" aria-label="Menu categories">

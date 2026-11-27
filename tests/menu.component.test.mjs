@@ -554,3 +554,17 @@ test("an unknown café shows 'Café not found' instead of a menu or a retry loop
     await page.unmount();
   }
 });
+
+test("a café with no menu items says the menu is not available yet instead of a blank page", async () => {
+  const page = await mount("/c/empty-m1/t/1", { "empty-m1": { mode: "tables", menu: "empty" } });
+  try {
+    await page.flush();
+    assert.match(page.text(), /Menu not available yet/);
+    assert.match(page.text(), /CAFE-empty-m1/, "the café's own name stays in the header");
+    assert.ok(page.container.querySelector('[role="status"]'), "the message is announced");
+    assert.equal(page.container.querySelector(".category-nav"), null, "no empty category rail");
+    assert.equal(page.container.querySelector(".cart-bar"), null);
+  } finally {
+    await page.unmount();
+  }
+});
