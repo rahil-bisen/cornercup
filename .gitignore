@@ -23,3 +23,6 @@ corner-cup-*.zip
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Live database exports made before a deploy (DEMO_DEPLOYMENT.md step 2): customer data and password hashes.
+backups/
