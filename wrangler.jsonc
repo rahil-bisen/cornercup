@@ -35,7 +35,16 @@
   "observability": {
     "enabled": true
   },
+  // Declaring secrets makes Wrangler load ONLY these keys from .dev.vars / process.env, so every
+  // secret the Worker reads has to be listed here or it silently disappears from `env`.
   "secrets": {
-    "required": ["ADMIN_SECRET"]
+    "required": [
+      "ADMIN_SECRET",
+      "OPERATOR_PASSWORD",
+      "OWNER_PASSWORD",
+      "MFA_ENC_KEY",
+      "RAZORPAY_KEY_ID",
+      "RAZORPAY_KEY_SECRET"
+    ]
   }
 }

@@ -106,6 +106,13 @@ export default function Admin() {
     setSession("in");
   }, []);
 
+  // The board owns the tab title while it is open; the sign-in screens must not inherit the guest
+  // menu's title from the page the owner arrived from.
+  useEffect(() => {
+    if (session === "in") return undefined;
+    document.title = cafe ? `Owner sign in · ${cafe}` : "Owner sign in";
+  }, [session, cafe]);
+
   // No café lives at this address, so there is no board to sign in to.
   if (isCafeNotFound(configError)) return <CafeNotFound />;
 

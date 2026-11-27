@@ -11,6 +11,12 @@ export default function Operator() {
   const [busy, setBusy] = useState(false);
   const [csrfToken, setCsrfToken] = useState("");
 
+  // The console is its own screen: without this the browser tab keeps whatever title the page the
+  // operator arrived from had set.
+  useEffect(() => {
+    document.title = "Operator console";
+  }, []);
+
   useEffect(() => {
     let alive = true;
     api("/api/operator/session")
