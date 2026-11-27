@@ -127,6 +127,7 @@ export default function Admin() {
       csrfToken={csrfToken}
       cafe={cafe}
       payments={config && config.payments}
+      serviceMode={config && config.service ? config.service.mode : null}
       onSettingsSaved={async () => {
         await refreshSiteConfig();
         setRevision((value) => value + 1);
@@ -310,8 +311,22 @@ function paymentMode(payments) {
   return gatewayEnabled({ payments }) ? "Razorpay checkout on" : "Guests pay at the counter";
 }
 
-function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments, onSettingsSaved }) {
+function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments, serviceMode, onSettingsSaved }) {
+  // A pickup café has one code for the whole café instead of one per table.
+  const counterService = serviceMode === "counter";
   const [tab, setTab] = useState("orders");
+  // A pickup café has no tables, so it has no Tables & QR tab at all; a Counter QR code tab takes its place.
+  // The list follows the saved service mode, so a mode change in Café setup updates it without a reload.
+  const tabs = [
+    ["orders", "Orders"],
+    ["menu", "Menu"],
+    counterService ? ["counter-qr", "Counter QR code"] : ["tables", "Tables & QR"],
+    ["settings", "Café setup"],
+    ["security", "Security"],
+  ];
+  // If the tab on screen no longer exists (Tables & QR after a switch to counter service, or the reverse),
+  // show Orders.
+  const activeTab = tabs.some(([key]) => key === tab) ? tab : "orders";
 
   const call = useCallback(
     async (path, options = {}) => {
@@ -378,17 +393,11 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
       </header>
 
       <nav className="admin-tabs" aria-label="Staff sections">
-        {[
-          ["orders", "Orders"],
-          ["menu", "Menu"],
-          ["tables", "Tables & QR"],
-          ["settings", "Café setup"],
-          ["security", "Security"],
-        ].map(([key, label]) => (
+        {tabs.map(([key, label]) => (
           <button
             key={key}
             type="button"
-            className={`admin-tab${tab === key ? " active" : ""}`}
+            className={`admin-tab${activeTab === key ? " active" : ""}`}
             onClick={() => setTab(key)}
           >
             {label}
@@ -397,13 +406,14 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
       </nav>
 
       <div className="admin-body">
-        {tab === "orders" && (
+        {activeTab === "orders" && (
           <OrdersTab call={call} cafe={cafe} counterOnly={Boolean(payments) && !gatewayEnabled({ payments })} />
         )}
-        {tab === "menu" && <MenuTab call={call} csrfToken={csrfToken} />}
-        {tab === "tables" && <TablesTab call={call} />}
-        {tab === "settings" && <SettingsTab call={call} onSaved={onSettingsSaved} />}
-        {tab === "security" && <SecurityTab call={call} onSignOut={onSignOut} />}
+        {activeTab === "menu" && <MenuTab call={call} csrfToken={csrfToken} />}
+        {activeTab === "tables" && <TablesTab call={call} />}
+        {activeTab === "counter-qr" && <CounterQrCard cafe={cafe} />}
+        {activeTab === "settings" && <SettingsTab call={call} onSaved={onSettingsSaved} />}
+        {activeTab === "security" && <SecurityTab call={call} onSignOut={onSignOut} />}
       </div>
     </div>
   );
@@ -1612,6 +1622,88 @@ function MenuTab({ call, csrfToken }) {
           </button>
         </form>
       )}
+    </section>
+  );
+}
+
+// A counter (pickup) café has no tables, so it gets one code for /c/<slug>/menu instead of one per table.
+// Scanning a table code in a pickup café used to end at "Send order" with "This café takes pickup
+// orders — no table is needed."; the menu now treats such a visit as a pickup order, and this is the
+// code to print instead. It has its own tab, in the place of Tables & QR; the printed sheet carries only
+// the café name, "Scan to order" and the code.
+function CounterQrCard({ cafe }) {
+  const path = cafePath("/menu");
+  const [url, setUrl] = useState("");
+  const [code, setCode] = useState("");
+
+  useEffect(() => {
+    setUrl(`${window.location.origin}${path}`);
+  }, [path]);
+
+  useEffect(() => {
+    if (!url) return undefined;
+    let alive = true;
+    QRCode.toDataURL(url, { margin: 1, width: 640, color: { dark: "#231713", light: "#ffffff" } })
+      .then((value) => {
+        if (alive) setCode(value);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+
+  // While printing, the body class tells the print styles to show the card alone (no heading, buttons or
+  // notes). It is removed when the print dialog closes.
+  const printSheet = () => {
+    const body = window.document.body;
+    const done = () => {
+      body.classList.remove("printing-counter-qr");
+      window.removeEventListener("afterprint", done);
+    };
+    body.classList.add("printing-counter-qr");
+    window.addEventListener("afterprint", done);
+    window.print();
+  };
+
+  return (
+    <section className="counter-qr">
+      <div className="board-head-row no-print">
+        <h1>Counter QR code</h1>
+        <p className="muted small">One code for the whole café — guests scan it to order for pickup</p>
+      </div>
+
+      <div className="table-tools counter-qr-tools no-print">
+        <button type="button" className="btn ghost small-btn" onClick={printSheet}>
+          Print sheet
+        </button>
+        <a
+          className="btn primary small-btn"
+          href={code || "#"}
+          download={`qr-counter-${cafeSlug() || "cafe"}.png`}
+          aria-disabled={code ? undefined : "true"}
+        >
+          Download PNG
+        </a>
+      </div>
+
+      <article className="qr-card counter-qr-card" data-qr-url={url || undefined}>
+        <h2>{cafe}</h2>
+        <p className="counter-qr-cta">Scan to order</p>
+        {code ? (
+          <img src={code} alt={`QR code to order from ${cafe}`} className="qr-img" />
+        ) : (
+          <div className="qr-img skeleton" />
+        )}
+        <a className="url-note no-print" href={path} target="_blank" rel="noreferrer">
+          /c/{cafeSlug()}/menu
+        </a>
+      </article>
+
+      <p className="muted small no-print counter-qr-note">
+        Table QR codes are only used for table service. Switch the service style to table service in Café setup and
+        the Tables &amp; QR tab comes back with your existing tables.
+      </p>
     </section>
   );
 }
