@@ -57,12 +57,27 @@ function transportError(cause, { timedOut, canceled, timeoutMs }) {
     return error;
   }
 
-  const error = new Error("Couldn't reach the café's server. Check your connection and try again.");
+  const error = new Error("Couldn't connect. Check your internet connection and try again.");
   error.name = "NetworkError";
   error.code = "network";
   error.reason = "network";
   error.cause = cause;
   return error;
+}
+
+// Wording for an error reply that carries no message of ours. A 429 is still "too many attempts", with
+// the wait from Retry-After when the reply has one; anything else is a server error and stays generic.
+function fallbackMessage(response) {
+  if (response.status === 429) {
+    const header = response.headers && typeof response.headers.get === "function" ? response.headers.get("retry-after") : null;
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      const minutes = Math.ceil(seconds / 60);
+      return `Too many attempts. Please try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
+    }
+    return "Too many attempts. Please try again in a few minutes.";
+  }
+  return "Something went wrong. Please try again.";
 }
 
 // The staff session is an HttpOnly cookie the browser sends by itself, so nothing here has to
@@ -116,7 +131,9 @@ export async function api(path, options = {}) {
     }
 
     if (!response.ok) {
-      const error = new Error((data && data.error) || "Something went wrong. Please try again.");
+      // The app's own JSON answer is shown as it is (a wrong password, a lockout with its wait, "not set
+      // up"). Only a reply that is not ours, such as an edge error page, falls back to fixed wording.
+      const error = new Error((data && data.error) || fallbackMessage(response));
       error.status = response.status;
       error.code = data && data.code ? data.code : undefined;
       throw error;

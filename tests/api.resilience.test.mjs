@@ -320,3 +320,51 @@ test("one caller's cancellation cannot cancel the shared config request", async 
   assert.equal(a.cafe.name, "Still Here");
   assert.equal(b.cafe.name, "Still Here");
 });
+
+// Sign-in and every other call: what the guest or owner reads when a request fails.
+function rawResponse(body, { status, headers = {} } = {}) {
+  const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name) => (name.toLowerCase() in lower ? lower[name.toLowerCase()] : null) },
+    text: async () => body,
+  };
+}
+
+test("a network failure says to check the internet connection", async () => {
+  stubFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+  const err = await api("/api/health").catch((e) => e);
+  assert.equal(err.message, "Couldn't connect. Check your internet connection and try again.");
+});
+
+test("the server's own message is shown as it is, e.g. a wrong password", async () => {
+  stubFetch(() => jsonResponse({ error: "Incorrect password. Please try again.", code: "wrong_password" }, { status: 401 }));
+  const err = await api("/api/operator/login", { method: "POST", body: "{}" }).catch((e) => e);
+  assert.equal(err.status, 401);
+  assert.equal(err.message, "Incorrect password. Please try again.");
+  assert.equal(err.code, "wrong_password");
+});
+
+test("a real server error keeps the generic message, JSON or not", async () => {
+  stubFetch(() => jsonResponse({ error: "Something went wrong. Please try again." }, { status: 500 }));
+  const fromWorker = await api("/api/health").catch((e) => e);
+  assert.equal(fromWorker.status, 500);
+  assert.equal(fromWorker.message, "Something went wrong. Please try again.");
+
+  stubFetch(() => rawResponse("<html>Error 1101</html>", { status: 502 }));
+  const fromEdge = await api("/api/health").catch((e) => e);
+  assert.equal(fromEdge.status, 502);
+  assert.equal(fromEdge.message, "Something went wrong. Please try again.");
+});
+
+test("a 429 that is not the app's JSON still reads as too many attempts, with the wait when known", async () => {
+  stubFetch(() => rawResponse("Too Many Requests", { status: 429, headers: { "Retry-After": "120" } }));
+  const withHeader = await api("/api/operator/login", { method: "POST", body: "{}" }).catch((e) => e);
+  assert.equal(withHeader.status, 429);
+  assert.equal(withHeader.message, "Too many attempts. Please try again in 2 minutes.");
+
+  stubFetch(() => rawResponse("", { status: 429 }));
+  const without = await api("/api/operator/login", { method: "POST", body: "{}" }).catch((e) => e);
+  assert.equal(without.message, "Too many attempts. Please try again in a few minutes.");
+});
