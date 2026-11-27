@@ -43,8 +43,15 @@ function headingFor(order, pickup) {
   return "Order confirmed";
 }
 
+// Staff pressing "Payment received" stores payment_status 'counter' together with paid_at. A guest who
+// only chose to pay at the counter gets 'counter' with no paid_at and still owes the bill.
+function paidAtCounter(order) {
+  return order.paymentStatus === "counter" && Boolean(order.paidAt);
+}
+
 function paymentSummary(order) {
   if (order.paymentStatus === "confirmed") return { label: "Paid", tone: "paid" };
+  if (paidAtCounter(order)) return { label: "Paid at the counter", tone: "paid" };
   if (order.paymentStatus === "counter" || order.paymentMethod === "counter") {
     return { label: "Pay at the counter when you leave", tone: "counter" };
   }
@@ -262,7 +269,7 @@ export default function OrderStatus() {
               stays as the record of what was ordered; only the reassurance line changes. */}
           {cancelled
             ? "This order was cancelled — nothing to pay."
-            : order.paymentStatus === "confirmed"
+            : order.paymentStatus === "confirmed" || paidAtCounter(order)
               ? "Payment received — thank you!"
               : order.paymentStatus === "counter" || order.paymentMethod === "counter"
                 ? "Pay at the counter — card, cash or UPI."
