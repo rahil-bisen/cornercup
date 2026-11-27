@@ -5,6 +5,7 @@ import { api, cafePath, cafeSlug } from "../lib/api.js";
 import { cafeName, isCafeNotFound, refreshSiteConfig, useSiteConfigState } from "../lib/config.js";
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { clockTime, money, timeAgo } from "../lib/money.js";
+import { gatewayEnabled } from "../lib/payments.js";
 
 const WARM_MINUTES = 10;
 const LATE_MINUTES = 20;
@@ -306,7 +307,7 @@ function AdminLogin({ onSignIn, ownerAuth }) {
 // back to counter payments instead of showing a guest a pay button that would fail.
 function paymentMode(payments) {
   if (!payments) return "loading…";
-  return payments.gateway ? "Razorpay checkout on" : "Razorpay keys missing — counter payments only";
+  return gatewayEnabled({ payments }) ? "Razorpay checkout on" : "Guests pay at the counter";
 }
 
 function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments, onSettingsSaved }) {
@@ -396,7 +397,9 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
       </nav>
 
       <div className="admin-body">
-        {tab === "orders" && <OrdersTab call={call} cafe={cafe} />}
+        {tab === "orders" && (
+          <OrdersTab call={call} cafe={cafe} counterOnly={Boolean(payments) && !gatewayEnabled({ payments })} />
+        )}
         {tab === "menu" && <MenuTab call={call} csrfToken={csrfToken} />}
         {tab === "tables" && <TablesTab call={call} />}
         {tab === "settings" && <SettingsTab call={call} onSaved={onSettingsSaved} />}
@@ -406,7 +409,10 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
   );
 }
 
-function OrdersTab({ call, cafe }) {
+// counterOnly: the café takes no online payment, so every order arrives unpaid and is paid at the counter
+// later. Such a board shows and announces every order; the paid-first split only makes sense with a
+// gateway, where an unpaid ticket means the guest has not paid yet and the kitchen should wait.
+function OrdersTab({ call, cafe, counterOnly = false }) {
   const [orders, setOrders] = useState(null);
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
@@ -421,6 +427,8 @@ function OrdersTab({ call, cafe }) {
   const soundRef = useRef(sound);
 
   soundRef.current = sound;
+  const counterOnlyRef = useRef(counterOnly);
+  counterOnlyRef.current = counterOnly;
 
   // Two rising notes, built on the fly so the board ships no audio file. A blocked AudioContext
   // is not worth an error: the visual alert still lands.
@@ -464,7 +472,9 @@ function OrdersTab({ call, cafe }) {
         const fresh = next.filter(
           (order) =>
             !seen.current.has(order.id) &&
-            (order.paymentStatus === "confirmed" || order.paymentStatus === "counter")
+            (counterOnlyRef.current ||
+              order.paymentStatus === "confirmed" ||
+              order.paymentStatus === "counter")
         );
         if (fresh.length) {
           setArrived(fresh.map((order) => order.id));
@@ -597,7 +607,12 @@ function OrdersTab({ call, cafe }) {
 
   // This is the owner's money screen: paid orders first, everything unsettled behind the second tab.
   const settled = (order) => order.paymentStatus === "confirmed" || order.paymentStatus === "counter";
-  const visible = (view === "paid" ? orders.filter(settled) : orders.filter((order) => !settled(order))).filter(matches);
+  const byPayment = counterOnly
+    ? orders
+    : view === "paid"
+      ? orders.filter(settled)
+      : orders.filter((order) => !settled(order));
+  const visible = byPayment.filter(matches);
   const open = visible.filter((order) => columns.some((column) => column.key === order.status));
   const done = visible.filter((order) => order.status === "served" || order.status === "cancelled");
 
@@ -612,7 +627,7 @@ function OrdersTab({ call, cafe }) {
   return (
     <section>
       <div className="board-head-row">
-        <h1>{view === "paid" ? "Paid orders" : "Unpaid / failed"}</h1>
+        <h1>{counterOnly ? "Orders" : view === "paid" ? "Paid orders" : "Unpaid / failed"}</h1>
         {arrived.length > 0 && (
           <button type="button" className="new-pill" onClick={() => setArrived([])}>
             {arrived.length} new {arrived.length === 1 ? "order" : "orders"} · tap to clear
@@ -672,6 +687,7 @@ function OrdersTab({ call, cafe }) {
         </button>
       </div>
 
+      {!counterOnly && (
       <div className="owner-tabs" role="tablist" aria-label="Filter orders by payment">
         <button
           type="button"
@@ -692,6 +708,7 @@ function OrdersTab({ call, cafe }) {
           Unpaid / failed
         </button>
       </div>
+      )}
 
       {error && <p className="alert" role="alert">{error}</p>}
 
