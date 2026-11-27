@@ -315,6 +315,17 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
   // A pickup café has one code for the whole café instead of one per table.
   const counterService = serviceMode === "counter";
   const [tab, setTab] = useState("orders");
+  // A pickup café has no tables, so it has no Tables & QR tab at all; its counter QR code is in Café setup.
+  // The list follows the saved service mode, so a mode change in Café setup updates it without a reload.
+  const tabs = [
+    ["orders", "Orders"],
+    ["menu", "Menu"],
+    ...(counterService ? [] : [["tables", "Tables & QR"]]),
+    ["settings", "Café setup"],
+    ["security", "Security"],
+  ];
+  // If the tab on screen no longer exists (Tables & QR after a switch to counter service), show Orders.
+  const activeTab = tabs.some(([key]) => key === tab) ? tab : "orders";
 
   const call = useCallback(
     async (path, options = {}) => {
@@ -381,17 +392,11 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
       </header>
 
       <nav className="admin-tabs" aria-label="Staff sections">
-        {[
-          ["orders", "Orders"],
-          ["menu", "Menu"],
-          ["tables", counterService ? "QR code" : "Tables & QR"],
-          ["settings", "Café setup"],
-          ["security", "Security"],
-        ].map(([key, label]) => (
+        {tabs.map(([key, label]) => (
           <button
             key={key}
             type="button"
-            className={`admin-tab${tab === key ? " active" : ""}`}
+            className={`admin-tab${activeTab === key ? " active" : ""}`}
             onClick={() => setTab(key)}
           >
             {label}
@@ -400,13 +405,15 @@ function AdminShell({ onSignOut, onSignOutEverywhere, csrfToken, cafe, payments,
       </nav>
 
       <div className="admin-body">
-        {tab === "orders" && (
+        {activeTab === "orders" && (
           <OrdersTab call={call} cafe={cafe} counterOnly={Boolean(payments) && !gatewayEnabled({ payments })} />
         )}
-        {tab === "menu" && <MenuTab call={call} csrfToken={csrfToken} />}
-        {tab === "tables" && (counterService ? <CounterQrTab cafe={cafe} /> : <TablesTab call={call} />)}
-        {tab === "settings" && <SettingsTab call={call} onSaved={onSettingsSaved} />}
-        {tab === "security" && <SecurityTab call={call} onSignOut={onSignOut} />}
+        {activeTab === "menu" && <MenuTab call={call} csrfToken={csrfToken} />}
+        {activeTab === "tables" && <TablesTab call={call} />}
+        {activeTab === "settings" && (
+          <SettingsTab call={call} onSaved={onSettingsSaved} counterService={counterService} cafe={cafe} />
+        )}
+        {activeTab === "security" && <SecurityTab call={call} onSignOut={onSignOut} />}
       </div>
     </div>
   );
@@ -871,7 +878,7 @@ function offsetLabel(minutes) {
   return `Current (UTC${sign}${hours}${rest ? `:${String(rest).padStart(2, "0")}` : ""})`;
 }
 
-function SettingsTab({ call, onSaved }) {
+function SettingsTab({ call, onSaved, counterService = false, cafe = "" }) {
   const [form, setForm] = useState(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -1038,6 +1045,9 @@ function SettingsTab({ call, onSaved }) {
           {saving ? "Saving…" : "Save café settings"}
         </button>
       </form>
+
+      {/* Follows the saved service style (not the unsaved dropdown), like the Tables & QR tab does. */}
+      {counterService && <CounterQrCard cafe={cafe} />}
 
       <p className="muted small">
         Guests reach this café at <strong>/c/{cafeSlug()}</strong> · staff sign in at{" "}
@@ -1622,8 +1632,9 @@ function MenuTab({ call, csrfToken }) {
 // A counter (pickup) café has no tables, so it gets one code for /c/<slug>/menu instead of one per table.
 // Scanning a table code in a pickup café used to end at "Send order" with "This café takes pickup
 // orders — no table is needed."; the menu now treats such a visit as a pickup order, and this is the
-// code to print instead. The printed card carries only the café name, "Scan to order" and the code.
-function CounterQrTab({ cafe }) {
+// code to print instead. It sits in Café setup, so printing hides everything else on that page: the
+// printed sheet carries only the café name, "Scan to order" and the code.
+function CounterQrCard({ cafe }) {
   const path = cafePath("/menu");
   const [url, setUrl] = useState("");
   const [code, setCode] = useState("");
@@ -1645,15 +1656,28 @@ function CounterQrTab({ cafe }) {
     };
   }, [url]);
 
+  // Café setup also holds the settings form, so while printing, the body class tells the print styles to
+  // show the card alone. It is removed when the print dialog closes.
+  const printSheet = () => {
+    const body = window.document.body;
+    const done = () => {
+      body.classList.remove("printing-counter-qr");
+      window.removeEventListener("afterprint", done);
+    };
+    body.classList.add("printing-counter-qr");
+    window.addEventListener("afterprint", done);
+    window.print();
+  };
+
   return (
-    <section>
+    <section className="counter-qr">
       <div className="board-head-row no-print">
-        <h1>Counter QR code</h1>
+        <h2>Counter QR code</h2>
         <p className="muted small">One code for the whole café — guests scan it to order for pickup</p>
       </div>
 
       <div className="table-tools counter-qr-tools no-print">
-        <button type="button" className="btn ghost small-btn" onClick={() => window.print()}>
+        <button type="button" className="btn ghost small-btn" onClick={printSheet}>
           Print sheet
         </button>
         <a
@@ -1680,8 +1704,8 @@ function CounterQrTab({ cafe }) {
       </article>
 
       <p className="muted small no-print counter-qr-note">
-        Table QR codes are only used for table service. If you start serving at tables, switch the service
-        style in Café setup and they will appear here.
+        Table QR codes are only used for table service. Switch the service style above to table service and the
+        Tables &amp; QR tab comes back with your existing tables.
       </p>
     </section>
   );

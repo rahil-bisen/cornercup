@@ -1564,6 +1564,11 @@ button {
   max-width: 360px;
 }
 
+/* In Café setup the card follows the settings form. */
+.counter-qr {
+  margin: 22px 0;
+}
+
 /* --------------------------------------------------------------- desktop */
 
 @media (min-width: 760px) {
@@ -1653,6 +1658,23 @@ button {
     border: 1px dashed #999;
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  /* Print sheet from Café setup: hide the settings form and everything else, keep the card alone. */
+  body.printing-counter-qr .admin-body * {
+    visibility: hidden;
+  }
+
+  body.printing-counter-qr .counter-qr-card,
+  body.printing-counter-qr .counter-qr-card * {
+    visibility: visible;
+  }
+
+  body.printing-counter-qr .counter-qr-card {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
   }
 
   /* The counter sheet is one card: centred and large enough to cut out and stand on the counter. */

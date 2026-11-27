@@ -1,11 +1,10 @@
-// The staff panel's QR tab follows the café's service mode. A counter (pickup) café gets one counter QR
-// code for /c/<slug>/menu with a printable card; its table codes are hidden, because scanning one in a
-// pickup café used to end in "This café takes pickup orders — no table is needed." A table-service café
-// keeps its per-table codes exactly as before.
+// The owner dashboard follows the café's service mode. A counter (pickup) café has no Tables & QR tab at
+// all; its single counter QR code for /c/<slug>/menu lives in Café setup, with a printable card and a PNG
+// download. A table-service café keeps its Tables & QR tab exactly as before. Saving a new service style
+// in Café setup updates both straight away, without a reload, and never touches the café's tables.
 //
 // jsdom has no canvas, so the PNG itself is checked in a real browser; here the link the code encodes is
 // read from the card's data-qr-url.
-
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, rm } from "node:fs/promises";
@@ -67,34 +66,67 @@ function json(body, status = 200) {
   return { ok: status < 400, status, text: async () => JSON.stringify(body) };
 }
 
-// `config` answers /api/config: a function may hold the reply; `signedIn` decides the session check.
-async function mount(slug, { config, signedIn = true }) {
-  const titles = [];
-  globalThis.fetch = async (url) => {
+
+// A tiny café server: the service mode lives in `state`, so saving Café setup really changes what the next
+// /config answers, the way the Worker does. Every request is recorded.
+function server(slug, initialMode) {
+  const state = { mode: initialMode };
+  const requests = [];
+  const tables = [
+    { id: 1, label: "Table 1", seats: 2 },
+    { id: 2, label: "Table 2", seats: 4 },
+  ];
+  const settings = () => ({
+    cafeName: `CAFE-${slug}`,
+    serviceMode: state.mode,
+    tzOffsetMin: 330,
+    contactPhone: "",
+    contactEmail: "",
+    contactAddress: "",
+  });
+  const handle = async (url, init = {}) => {
+    const method = (init.method || "GET").toUpperCase();
     const match = String(url).match(/\/api\/cafes\/[^/]+\/(.*)$/);
     const rest = match ? match[1] : "";
-    if (rest === "config") return config();
-    if (rest === "admin/session") {
-      return signedIn ? json({ ok: true, expiresIn: 3600, csrfToken: "csrf" }) : json({ error: "Sign in" }, 401);
+    requests.push({ method, rest, body: init.body });
+    if (rest === "config") {
+      return json({
+        currency: "INR",
+        slug,
+        cafe: { name: `CAFE-${slug}` },
+        service: { mode: state.mode },
+        payments: { provider: "none", gateway: false, keyId: null },
+      });
     }
+    if (rest === "admin/session") return json({ ok: true, expiresIn: 3600, csrfToken: "csrf" });
     if (rest === "admin/orders") return json({ orders: [], statistics: null });
-    if (rest === "admin/tables") return json({ tables: [{ id: 1, label: "Table 1", seats: 2 }, { id: 2, label: "Table 2", seats: 4 }] });
+    if (rest === "admin/tables" && method === "GET") return json({ tables });
+    if (rest === "admin/settings" && method === "GET") return json({ slug, settings: settings() });
+    if (rest === "admin/settings" && method === "PATCH") {
+      const body = JSON.parse(init.body || "{}");
+      if (body.serviceMode) state.mode = body.serviceMode;
+      return json({ slug, settings: settings() });
+    }
     return json({});
   };
+  return { state, requests, handle };
+}
+
+async function mount(slug, mode) {
+  const srv = server(slug, mode);
+  globalThis.fetch = srv.handle;
   window.history.replaceState({}, "", `/c/${slug}/owner`);
   window.localStorage.clear();
-
-  // Every title the page sets is recorded, so a brief "Café" flash cannot hide between two assertions.
-  const observer = new window.MutationObserver(() => titles.push(window.document.title));
-  observer.observe(window.document.head, { subtree: true, childList: true, characterData: true });
 
   const container = window.document.createElement("div");
   window.document.body.appendChild(container);
   const reactRoot = createRoot(container);
   const flush = async () => {
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
   };
   await act(async () => {
     reactRoot.render(
@@ -106,81 +138,116 @@ async function mount(slug, { config, signedIn = true }) {
     );
   });
   await flush();
-  return {
+  const page = {
+    srv,
     container,
-    titles,
     flush,
     text: () => container.textContent.replace(/\s+/g, " "),
+    tabs: () => [...container.querySelectorAll(".admin-tabs button")].map((b) => b.textContent.trim()),
+    async open(label) {
+      const tab = [...container.querySelectorAll(".admin-tabs button")].find((b) => b.textContent.trim() === label);
+      assert.ok(tab, `the "${label}" tab exists`);
+      await act(async () => {
+        tab.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      });
+      await flush();
+    },
+    counterCard: () => container.querySelector(".counter-qr-card"),
+    async saveServiceMode(value) {
+      const select = [...container.querySelectorAll("label.field")]
+        .find((label) => label.querySelector("span") && label.querySelector("span").textContent.trim() === "Service style")
+        .querySelector("select");
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+        setter.call(select, value);
+        select.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      const form = select.closest("form");
+      await act(async () => {
+        form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+      });
+      await flush();
+    },
     async unmount() {
-      observer.disconnect();
       await act(async () => reactRoot.unmount());
       container.remove();
     },
   };
+  return page;
 }
 
-const configFor = (slug, mode) => ({
-  currency: "INR",
-  slug,
-  cafe: { name: `CAFE-${slug}` },
-  service: { mode },
-  payments: { provider: "none", gateway: false, keyId: null },
-});
+const TABLES_TABS = ["Orders", "Menu", "Tables & QR", "Café setup", "Security"];
+const COUNTER_TABS = ["Orders", "Menu", "Café setup", "Security"];
 
-async function openQrTab(page) {
-  const tabs = [...page.container.querySelectorAll(".admin-tabs button")];
-  const tab = tabs[2];
-  assert.ok(tab, "the third staff tab exists");
-  await act(async () => {
-    tab.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  });
-  await page.flush();
-  await page.flush();
-  return tab.textContent.trim();
+function assertCounterCard(page, slug) {
+  const card = page.counterCard();
+  assert.ok(card, "Café setup shows the counter QR card");
+  assert.equal(card.getAttribute("data-qr-url"), `http://localhost/c/${slug}/menu`);
+  assert.match(card.textContent, new RegExp(`CAFE-${slug}`));
+  assert.match(card.textContent, /Scan to order/);
+  const section = card.closest("section");
+  const controls = [...section.querySelectorAll("button, a")].map((el) => el.textContent.trim());
+  assert.ok(controls.includes("Print sheet"), "a print button");
+  const download = [...section.querySelectorAll("a[download]")];
+  assert.equal(download.length, 1, "one download link");
+  assert.match(download[0].getAttribute("download"), /\.png$/);
 }
 
-test("a counter café gets one counter QR code for its menu, and no table codes", async () => {
-  const page = await mount("pickup-cafe", { config: async () => json(configFor("pickup-cafe", "counter")) });
+test("a counter café has no Tables & QR tab, and its counter QR card is in Café setup", async () => {
+  const page = await mount("pickup-cafe", "counter");
   try {
-    await page.flush();
-    const label = await openQrTab(page);
-    assert.equal(label, "QR code");
-
-    const cards = [...page.container.querySelectorAll(".qr-card")];
-    assert.equal(cards.length, 1, "exactly one card");
-    const card = cards[0];
-    assert.equal(card.getAttribute("data-qr-url"), "http://localhost/c/pickup-cafe/menu");
-    assert.match(card.textContent, /CAFE-pickup-cafe/);
-    assert.match(card.textContent, /Scan to order/);
-
-    const text = page.text();
-    assert.doesNotMatch(text, /Table 1|Table 2|Add a table/, "no table codes and no way to add tables here");
-    assert.match(text, /only used for table service/i, "a note says where table codes went");
-    const buttons = [...page.container.querySelectorAll("button, a")].map((el) => el.textContent.trim());
-    assert.ok(buttons.includes("Print sheet"));
-    const download = [...page.container.querySelectorAll("a[download]")];
-    assert.equal(download.length, 1, "one download link");
-    assert.match(download[0].getAttribute("download"), /\.png$/);
+    assert.deepEqual(page.tabs(), COUNTER_TABS);
+    assert.doesNotMatch(page.text(), /Tables & QR|Add a table/);
+    await page.open("Café setup");
+    assertCounterCard(page, "pickup-cafe");
+    assert.equal(
+      page.srv.requests.filter((r) => r.rest === "admin/tables").length,
+      0,
+      "a counter café's dashboard never loads the table list"
+    );
   } finally {
     await page.unmount();
   }
 });
 
-test("a table-service café keeps its per-table QR codes exactly as before", async () => {
-  const page = await mount("table-cafe", { config: async () => json(configFor("table-cafe", "tables")) });
+test("a table-service café keeps its Tables & QR tab exactly as before, and has no counter card", async () => {
+  const page = await mount("table-cafe", "tables");
   try {
-    await page.flush();
-    const label = await openQrTab(page);
-    assert.equal(label, "Tables & QR");
-
+    assert.deepEqual(page.tabs(), TABLES_TABS);
+    await page.open("Tables & QR");
     const text = page.text();
     assert.match(text, /Tables & QR codes/);
     assert.match(text, /Table 1/);
     assert.match(text, /Table 2/);
     assert.match(text, /Add a table/);
-    assert.doesNotMatch(text, /Scan to order|only used for table service/i, "no counter card");
     assert.equal(page.container.querySelectorAll(".qr-card").length, 2, "one card per table");
-    assert.equal(page.container.querySelector("[data-qr-url$='/menu']"), null);
+    assert.equal(page.counterCard(), null);
+
+    await page.open("Café setup");
+    assert.equal(page.counterCard(), null, "no counter card in a table café's setup");
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("switching service style in Café setup updates the tabs and the card straight away", async () => {
+  const page = await mount("switch-cafe", "tables");
+  try {
+    await page.open("Café setup");
+    assert.equal(page.counterCard(), null);
+
+    await page.saveServiceMode("counter");
+    assert.deepEqual(page.tabs(), COUNTER_TABS, "the Tables & QR tab is gone without a reload");
+    assertCounterCard(page, "switch-cafe");
+
+    await page.saveServiceMode("tables");
+    assert.deepEqual(page.tabs(), TABLES_TABS, "the tab is back");
+    assert.equal(page.counterCard(), null, "the counter card is gone");
+    await page.open("Tables & QR");
+    assert.match(page.text(), /Table 1/, "the same tables are listed again");
+
+    const writes = page.srv.requests.filter((r) => r.method !== "GET");
+    assert.ok(writes.every((r) => r.rest === "admin/settings"), "switching only saves settings; no table is touched");
   } finally {
     await page.unmount();
   }
