@@ -126,6 +126,11 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
   const [resetting, setResetting] = useState("");
   const [reveal, setReveal] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [archived, setArchived] = useState([]);
+  // The café being archived or deleted, and what the operator has typed to confirm it.
+  const [confirming, setConfirming] = useState(null);
+  const [typed, setTyped] = useState("");
+  const [removing, setRemoving] = useState(false);
   const [form, setForm] = useState({
     name: "",
     slug: "",
@@ -138,6 +143,7 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
     try {
       const payload = await api("/api/operator/cafes");
       setCafes(payload.cafes || []);
+      setArchived(payload.archived || []);
       setError("");
     } catch (err) {
       if (err.status === 401) onSignOut();
@@ -223,6 +229,53 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
     }
   };
 
+  // Archive and permanent delete each need the operator to type a phrase that names the café, so a
+  // slip of the mouse on the wrong row cannot remove anything. Restore is undoing an archive and
+  // needs no phrase; the server still checks the slug it is sent.
+  const startRemoval = (kind, cafe) => {
+    setConfirming({ kind, slug: cafe.slug, name: cafe.name });
+    setTyped("");
+    setError("");
+    setNotice("");
+  };
+  const phraseFor = (pending) => (pending.kind === "delete" ? `delete ${pending.slug}` : pending.slug);
+
+  const removal = async (kind, slug, confirmDelete) => {
+    setRemoving(true);
+    setError("");
+    setNotice("");
+    try {
+      const path = `/api/operator/cafes/${encodeURIComponent(slug)}`;
+      const payload = await api(kind === "delete" ? path : `${path}/${kind}`, {
+        method: kind === "delete" ? "DELETE" : "POST",
+        headers: { "x-csrf-token": csrfToken },
+        body: JSON.stringify(kind === "delete" ? { confirmSlug: slug, confirmDelete } : { confirmSlug: slug }),
+      });
+      setConfirming(null);
+      setTyped("");
+      if (kind === "archive") {
+        setNotice(`${slug} is archived. Its pages now show "Café not found" and its owners were signed out.`);
+      } else if (kind === "restore") {
+        setNotice(`${slug} is back. Its owners need to sign in again.`);
+      } else {
+        setNotice(
+          payload && payload.photosLeft
+            ? `${slug} was deleted. ${payload.photosLeft} photo(s) couldn't be removed from storage.`
+            : `${slug} and all of its data were deleted.`
+        );
+      }
+      await load();
+    } catch (err) {
+      if (err.status === 401) {
+        onSignOut();
+        return;
+      }
+      setError(err.message);
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const copyPassword = async () => {
     if (!reveal) return;
     try {
@@ -286,9 +339,119 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
                 >
                   {resetting === cafe.slug ? "Resetting…" : "Reset password"}
                 </button>
+                {cafe.primary ? (
+                  <small className="muted" title="The bare web address opens this café, so it can't be removed.">
+                    Main café
+                  </small>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn ghost small-btn danger"
+                    onClick={() => startRemoval("archive", cafe)}
+                    disabled={removing}
+                  >
+                    Remove café
+                  </button>
+                )}
               </div>
             ))}
           </div>
+
+          {confirming && (
+            <form
+              className="reset-reveal"
+              aria-label={confirming.kind === "delete" ? "Delete café permanently" : "Remove café"}
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (typed.trim().toLowerCase() !== phraseFor(confirming)) return;
+                removal(confirming.kind, confirming.slug, typed.trim().toLowerCase());
+              }}
+            >
+              {confirming.kind === "delete" ? (
+                <>
+                  <strong>Delete {confirming.name} permanently?</strong>
+                  <p className="small">
+                    This deletes its menu, photos, tables, orders, owner accounts and sessions. It can't be
+                    undone.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <strong>Remove {confirming.name}?</strong>
+                  <p className="small">
+                    The café is archived: guests see "Café not found", its owners are signed out and can't
+                    sign in. Its data is kept, and you can restore it from "Archived cafés".
+                  </p>
+                </>
+              )}
+              <label className="field">
+                <span>
+                  Type <code>{phraseFor(confirming)}</code> to confirm
+                </span>
+                <input
+                  autoFocus
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={typed}
+                  onChange={(event) => setTyped(event.target.value)}
+                />
+              </label>
+              <div className="reset-reveal-actions">
+                <button
+                  type="submit"
+                  className="btn small-btn danger"
+                  disabled={removing || typed.trim().toLowerCase() !== phraseFor(confirming)}
+                >
+                  {removing ? "Working…" : confirming.kind === "delete" ? "Delete permanently" : "Archive café"}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost small-btn"
+                  onClick={() => {
+                    setConfirming(null);
+                    setTyped("");
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+          {archived.length > 0 && (
+            <section aria-label="Archived cafés" className="archived-cafes">
+              <h2>Archived cafés</h2>
+              <p className="muted small">Hidden from guests and owners. Their data is kept until you delete it.</p>
+              <div className="table-grid">
+                {archived.map((cafe) => (
+                  <div key={cafe.slug} className="table-chip">
+                    <span className="table-chip-link">
+                      <span>{cafe.name}</span>
+                      <small>
+                        /c/{cafe.slug} · {cafe.menuCount} items · {cafe.orderCount} orders
+                      </small>
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost small-btn"
+                      onClick={() => removal("restore", cafe.slug)}
+                      disabled={removing}
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost small-btn danger"
+                      onClick={() => startRemoval("delete", cafe)}
+                      disabled={removing}
+                    >
+                      Delete permanently
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           {reveal && (
             <div className="reset-reveal">

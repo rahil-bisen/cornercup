@@ -30,23 +30,36 @@ export function publicCafe(cafe) {
   };
 }
 
-export async function findCafeBySlug(env, slug) {
+// An archived café is treated as absent everywhere a guest, owner or sign-in reaches it, so its pages
+// answer "Café not found" and no order or sign-in can start. Only the operator's archive, restore
+// and delete routes (and the slug-uniqueness check) pass `includeArchived`.
+export async function findCafeBySlug(env, slug, { includeArchived = false } = {}) {
   if (!slug) return null;
-  return env.DB.prepare("SELECT * FROM cafes WHERE slug = ?").bind(String(slug).toLowerCase()).first();
+  const sql = includeArchived
+    ? "SELECT * FROM cafes WHERE slug = ?"
+    : "SELECT * FROM cafes WHERE slug = ? AND archived_at IS NULL";
+  return env.DB.prepare(sql).bind(String(slug).toLowerCase()).first();
 }
 
 export async function findCafeById(env, id) {
-  return env.DB.prepare("SELECT * FROM cafes WHERE id = ?").bind(Number(id)).first();
+  return env.DB.prepare("SELECT * FROM cafes WHERE id = ? AND archived_at IS NULL").bind(Number(id)).first();
 }
 
-// The café that answers at the bare domain: the oldest one, so a single-café deployment keeps the
-// exact URL its guests and printed QR codes already know.
+// The primary café: the oldest one, so a single-café deployment keeps the exact URL its guests and
+// printed QR codes already know. It answers at the bare domain and can never be archived or deleted.
+export async function primaryCafeId(env) {
+  const row = await env.DB.prepare("SELECT id FROM cafes ORDER BY id ASC LIMIT 1").first();
+  return row ? Number(row.id) : null;
+}
+
 export async function defaultCafe(env) {
-  return env.DB.prepare("SELECT * FROM cafes ORDER BY id ASC LIMIT 1").first();
+  return env.DB.prepare("SELECT * FROM cafes WHERE archived_at IS NULL ORDER BY id ASC LIMIT 1").first();
 }
 
 export async function listCafes(env) {
-  const { results } = await env.DB.prepare("SELECT * FROM cafes ORDER BY name ASC").all();
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM cafes WHERE archived_at IS NULL ORDER BY name ASC"
+  ).all();
   return (results || []).map(publicCafe);
 }
 
@@ -56,7 +69,8 @@ export async function createCafe(env, { name, slug, password, serviceMode = "tab
   if (cleanName.length < 2) throw new Error("Give the café a name.");
 
   const finalSlug = slugify(slug || cleanName);
-  if ((await findCafeBySlug(env, finalSlug)) || finalSlug === "operator") {
+  // Archived cafés still hold their slug: reusing it would hand the old café's restore to a stranger.
+  if ((await findCafeBySlug(env, finalSlug, { includeArchived: true })) || finalSlug === "operator") {
     throw new Error("That web address is already taken.");
   }
 

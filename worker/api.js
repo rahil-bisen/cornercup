@@ -75,12 +75,14 @@ import {
 } from "./totp.js";
 import { drainProviderRevocations, queueProviderRevocationsStatement } from "./revocations.js";
 import { claimDigest, randomToken } from "./pkce.js";
+import { archiveStatements, deleteStatements, isRemovalGuardFailure, restoreStatements } from "./cafe-removal.js";
 import {
   cafeSettings,
   createCafe,
   defaultCafe,
   findCafeBySlug,
   hashPassword,
+  primaryCafeId,
   isArgon2Hash,
   PasswordQueueFullError,
   passwordNeedsReset,
@@ -594,6 +596,15 @@ async function operatorApi(request, env, path) {
   if (path[0] === "cafes" && path.length === 3 && path[2] === "reset-password" && method === "POST") {
     return operatorResetPassword(request, env, path[1]);
   }
+  if (path[0] === "cafes" && path.length === 3 && path[2] === "archive" && method === "POST") {
+    return operatorArchiveCafe(request, env, path[1]);
+  }
+  if (path[0] === "cafes" && path.length === 3 && path[2] === "restore" && method === "POST") {
+    return operatorRestoreCafe(request, env, path[1]);
+  }
+  if (path[0] === "cafes" && path.length === 2 && method === "DELETE") {
+    return operatorDeleteCafe(request, env, path[1]);
+  }
   if (path[0] === "cafes" && path.length === 3 && path[2] === "auth-mode" && method === "POST") {
     return operatorAuthMode(request, env, path[1]);
   }
@@ -769,23 +780,179 @@ async function operatorLogoutEverywhere(request, env) {
 
 async function operatorCafes(env) {
   const { results } = await env.DB.prepare(
-    "SELECT c.slug, c.name, c.service_mode, " +
+    "SELECT c.id, c.slug, c.name, c.service_mode, c.archived_at, " +
       "(SELECT COUNT(*) FROM menu_items m WHERE m.cafe_id = c.id) AS menu_count, " +
       "(SELECT COUNT(*) FROM orders o WHERE o.cafe_id = c.id) AS order_count, " +
       "(SELECT COUNT(*) FROM orders o WHERE o.cafe_id = c.id AND o.status IN ('new', 'preparing', 'ready')) AS open_count " +
       "FROM cafes c ORDER BY c.name ASC"
   ).all();
 
+  const primaryId = await primaryCafeId(env);
+  const rows = (results || []).map((row) => ({
+    slug: row.slug,
+    name: row.name,
+    serviceMode: row.service_mode === "counter" ? "counter" : "tables",
+    menuCount: row.menu_count,
+    orderCount: row.order_count,
+    openCount: row.open_count,
+    primary: Number(row.id) === primaryId,
+    archivedAt: row.archived_at == null ? null : Number(row.archived_at),
+  }));
   return json({
-    cafes: (results || []).map((row) => ({
-      slug: row.slug,
-      name: row.name,
-      serviceMode: row.service_mode === "counter" ? "counter" : "tables",
-      menuCount: row.menu_count,
-      orderCount: row.order_count,
-      openCount: row.open_count,
-    })),
+    cafes: rows.filter((row) => row.archivedAt === null).map(({ archivedAt, ...row }) => row),
+    archived: rows.filter((row) => row.archivedAt !== null),
   });
+}
+
+/* ------------------------------------------------- operator: remove a café */
+
+const REMOVE_UNVERIFIED = "That request couldn't be verified. Reload the console and try again.";
+const REMOVE_CONFLICT = "That café changed while you were working. Reload and try again.";
+
+// Who did it, without any credential: a short digest of the operator session id, which tells
+// sessions apart in the audit log and cannot be replayed.
+async function operatorAuditSubject(request, env) {
+  const claims = await tokenClaims(env, readCookie(request, OPERATOR_COOKIE));
+  const sessionId = claims ? operatorSessionIdFromSubject(claims.subject) : null;
+  return sessionId ? `operator:${(await sha256Hex(sessionId)).slice(0, 12)}` : null;
+}
+
+async function removalDetail(request, cafe) {
+  return JSON.stringify({ slug: cafe.slug, name: cafe.name, ip: (await clientIpHash(request)).slice(0, 16) });
+}
+
+// The café's session ids, as the digests their CSRF tokens are bound to.
+async function cafeSessionCsrfHashes(env, cafeId) {
+  const { results } = await env.DB.prepare("SELECT session_id FROM owner_sessions WHERE cafe_id = ?")
+    .bind(cafeId)
+    .all();
+  return Promise.all((results || []).map((row) => sha256Hex(String(row.session_id))));
+}
+
+// The shared front half of archive, restore and delete: CSRF and Origin, the slug, the typed slug.
+async function removalRequest(request, env, rawSlug) {
+  const csrf = await verifyCsrf(request, env);
+  if (!csrf.ok) return { response: json({ error: REMOVE_UNVERIFIED }, 403) };
+  const slug = String(rawSlug || "").toLowerCase();
+  const cafe = await findCafeBySlug(env, slug, { includeArchived: true });
+  if (!cafe) return { response: json({ error: "No café found at that web address." }, 404) };
+  const body = (await readJson(request, BODY_LIMITS.operatorRemove)) || {};
+  if (String(body.confirmSlug || "").trim().toLowerCase() !== cafe.slug) {
+    return {
+      response: json({ error: `Type the café's web address (${cafe.slug}) to confirm.`, code: "confirm_slug" }, 400),
+    };
+  }
+  const subject = await operatorAuditSubject(request, env);
+  if (!subject) return { response: json({ error: "Sign in to the operator console." }, 401) };
+  return { cafe, body, subject, primary: Number(cafe.id) === (await primaryCafeId(env)) };
+}
+
+function primaryRefusal() {
+  return json(
+    { error: "This is the main café that your bare web address opens, so it can't be removed.", code: "primary_cafe" },
+    409
+  );
+}
+
+async function operatorArchiveCafe(request, env, rawSlug) {
+  const req = await removalRequest(request, env, rawSlug);
+  if (req.response) return req.response;
+  const { cafe, subject } = req;
+  if (req.primary) return primaryRefusal();
+  if (cafe.archived_at != null) return json({ error: "That café is already archived.", code: "already_archived" }, 409);
+
+  const now = Date.now();
+  let results;
+  try {
+    results = await env.DB.batch(
+      archiveStatements(env, {
+        cafeId: cafe.id,
+        now,
+        subject,
+        detail: await removalDetail(request, cafe),
+        csrfKeyHashes: await cafeSessionCsrfHashes(env, cafe.id),
+      })
+    );
+  } catch (err) {
+    console.error("Café archive failed", { cafeId: cafe.id, error: err && err.message ? err.message : String(err) });
+    return json({ error: "We couldn't archive that café. Nothing was changed." }, 500);
+  }
+  if (Number(results && results[0] && results[0].meta && results[0].meta.changes) !== 1) {
+    return json({ error: REMOVE_CONFLICT }, 409);
+  }
+  return json({ ok: true, slug: cafe.slug, archivedAt: now });
+}
+
+async function operatorRestoreCafe(request, env, rawSlug) {
+  const req = await removalRequest(request, env, rawSlug);
+  if (req.response) return req.response;
+  const { cafe, subject } = req;
+  if (cafe.archived_at == null) return json({ error: "That café isn't archived.", code: "not_archived" }, 409);
+
+  try {
+    await env.DB.batch(
+      restoreStatements(env, { cafeId: cafe.id, now: Date.now(), subject, detail: await removalDetail(request, cafe) })
+    );
+  } catch (err) {
+    if (isRemovalGuardFailure(err)) return json({ error: REMOVE_CONFLICT }, 409);
+    console.error("Café restore failed", { cafeId: cafe.id, error: err && err.message ? err.message : String(err) });
+    return json({ error: "We couldn't restore that café. Nothing was changed." }, 500);
+  }
+  return json({ ok: true, slug: cafe.slug });
+}
+
+async function operatorDeleteCafe(request, env, rawSlug) {
+  const req = await removalRequest(request, env, rawSlug);
+  if (req.response) return req.response;
+  const { cafe, body, subject } = req;
+  if (req.primary) return primaryRefusal();
+  if (cafe.archived_at == null) {
+    return json({ error: "Archive the café before deleting it permanently.", code: "not_archived" }, 409);
+  }
+  if (String(body.confirmDelete || "").trim().toLowerCase() !== `delete ${cafe.slug}`) {
+    return json({ error: `Type "delete ${cafe.slug}" to confirm.`, code: "confirm_delete" }, 400);
+  }
+
+  // Photos are read before the rows that name them go, and removed only after the delete commits,
+  // so a failed delete never leaves menu items pointing at missing photos.
+  const { results: photos } = await env.DB.prepare(
+    "SELECT image_key FROM menu_items WHERE cafe_id = ? AND image_key IS NOT NULL"
+  )
+    .bind(cafe.id)
+    .all();
+
+  try {
+    await env.DB.batch(
+      deleteStatements(env, {
+        cafeId: cafe.id,
+        now: Date.now(),
+        subject,
+        detail: await removalDetail(request, cafe),
+        csrfKeyHashes: await cafeSessionCsrfHashes(env, cafe.id),
+      })
+    );
+  } catch (err) {
+    if (isRemovalGuardFailure(err)) return json({ error: REMOVE_CONFLICT }, 409);
+    console.error("Café delete failed", { cafeId: cafe.id, error: err && err.message ? err.message : String(err) });
+    return json({ error: "We couldn't delete that café. Nothing was changed." }, 500);
+  }
+
+  let photosLeft = 0;
+  if (env.IMAGES) {
+    const prefix = `cafes/${Number(cafe.id)}/`;
+    for (const row of photos || []) {
+      const key = String(row.image_key);
+      // Only keys inside this café's own prefix are touched, whatever a row says.
+      if (!key.startsWith(prefix)) continue;
+      try {
+        await env.IMAGES.delete(key);
+      } catch (err) {
+        photosLeft += 1;
+        console.error("Café photo cleanup failed", { cafeId: cafe.id, error: err && err.message ? err.message : String(err) });
+      }
+    }
+  }
+  return json({ ok: true, slug: cafe.slug, photosLeft });
 }
 
 async function operatorCreateCafe(request, env) {

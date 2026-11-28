@@ -19,7 +19,11 @@ function cafeDb() {
               sql,
               values,
               first: async () => {
+                // The slug check includes archived cafés; the lookup after the insert does not.
                 if (sql === "SELECT * FROM cafes WHERE slug = ?") return cafes.get(values[0]) || null;
+                if (sql === "SELECT * FROM cafes WHERE slug = ? AND archived_at IS NULL") {
+                  return cafes.get(values[0]) || null;
+                }
                 throw new Error(`Unexpected query: ${sql}`);
               },
             };
@@ -61,7 +65,7 @@ test("production café creation does not seed a demo menu or default tables", as
     [
       "SELECT * FROM cafes WHERE slug = ?",
       "INSERT INTO cafes (slug, name, service_mode, pass_hash) VALUES (?, ?, ?, ?)",
-      "SELECT * FROM cafes WHERE slug = ?",
+      "SELECT * FROM cafes WHERE slug = ? AND archived_at IS NULL",
     ]
   );
   assert.equal(db.batches[0].length, 1);
