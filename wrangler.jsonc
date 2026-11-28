@@ -44,7 +44,7 @@
     "required": ["ADMIN_SECRET", "OPERATOR_PASSWORD"]
   },
   "env": {
-    // `npm run dev` and `npm start` (Render) run `wrangler dev --env selfhost`. Declaring secrets makes
+    // `npm run dev` and `npm start` run `wrangler dev --env selfhost`. Declaring secrets makes
     // `wrangler dev` load ONLY the listed keys from .dev.vars / process.env, so this list names every
     // key the Worker reads from `env`, optional ones included. In `wrangler dev` a missing key is only
     // a warning. Bindings are not inherited by a named environment, so they are repeated here.
