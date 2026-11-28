@@ -252,15 +252,19 @@ database path.
 The app is a Worker plus static assets, so it deploys to Cloudflare:
 
 ```bash
-npm run build
-npx wrangler deploy
+npm run deploy
 ```
+
+`npm run deploy` builds and runs `wrangler deploy --env=`, which targets the top-level configuration (the
+live `corner-cup` Worker). The `selfhost` environment in `wrangler.jsonc` is only for `wrangler dev`.
 
 `wrangler.jsonc` binds the existing `corner-cup` D1 database (`eefda06c-f8d6-483d-85f2-a6a21b1827d8`)
 as `DB` and the existing `corner-cup-images` R2 bucket as `IMAGES`. The initial deployment uses
 `workers.dev`; no custom-domain routes are configured.
 
-Before deployment, configure `ADMIN_SECRET` and `OPERATOR_PASSWORD` as Worker secrets. Production starts with
+Before deployment, configure `ADMIN_SECRET` and `OPERATOR_PASSWORD` as Worker secrets. They are the only
+secrets `wrangler.jsonc` marks as required for a deploy: Wrangler refuses to deploy while a listed secret is
+missing, so optional ones are deliberately not listed and are picked up whenever they are set. Production starts with
 an empty café directory; use the authenticated `/operator` flow to create the real café and its owner password,
 then enter the actual menu and table data from the owner board. Do not configure `SEED_DEMO_DATA` in production.
 Configure `MFA_ENC_KEY` to enable
@@ -269,41 +273,11 @@ owner two-factor authentication. If enabling WorkOS-managed owner authentication
 `WORKOS_STATE_ENCRYPTION_KEY` values as well. `OWNER_PASSWORD` is only needed for a deliberately environment-bootstrapped first café;
 `ADMIN_PIN` is not read at all.
 
-### Hosting on Render (`npm start`)
+### Local settings (`npm run dev` / `npm start`)
 
-`npm start` runs `wrangler dev`, which does **not** read ordinary process environment variables by default.
-With no `.dev.vars` file it only looks at `.env` files, so variables entered in Render's dashboard are invisible
-to the Worker and checkout answers `503 Ordering isn't configured` (no `ORDER_TRACK_SECRET`/`ADMIN_SECRET`).
-
-In the Render service → **Environment**:
-
-1. Add `CLOUDFLARE_INCLUDE_PROCESS_ENV` = `true`. This tells wrangler to pass Render's variables to the Worker.
-2. Add the secrets (`ADMIN_SECRET`, `OPERATOR_PASSWORD`, `OWNER_PASSWORD`, `MFA_ENC_KEY`, optionally
-   `ORDER_TRACK_SECRET` and the Razorpay keys) as normal environment variables.
-3. Do **not** add a Secret File named `.dev.vars` or `.env`: a `.dev.vars` file makes wrangler ignore the
-   process environment entirely.
-4. Save, then redeploy (or *Manual Deploy → Deploy latest commit*).
-
-Note that `wrangler dev` keeps D1 in a local file under `.wrangler/state`. On Render that file lives on the
-instance's temporary disk, so data does not survive a restart or redeploy unless it is moved to persistent
-storage (see "Data on Render" below).
-
-### Data on Render
-
-`npm start` passes no `--persist-to`, so the D1 database is a SQLite file under `.wrangler/state/` in the
-app folder. Render resets that folder on every deploy and restart (free instances also restart after idling).
-The app then recreates its tables and seeds the demo menu, so it *looks* healthy, but cafés created in
-`/operator`, owner passwords and MFA enrollments, menu edits, tables and all orders are gone.
-
-Options, best first:
-
-1. **Deploy to Cloudflare Workers with a real D1 database** (`npx wrangler d1 create corner-cup`, put the id in
-   `wrangler.jsonc`, `npm run deploy`, secrets via `wrangler secret put`). This is what the app is built for:
-   D1 is durable and has point-in-time restore. Render is then not needed.
-2. **Stay on Render with a persistent disk** (paid instance): attach a disk, e.g. at `/var/data`, and change the
-   Render start command to `npx wrangler dev --ip 0.0.0.0 --port 3000 --persist-to /var/data/wrangler`. Data
-   survives restarts, but this is still a development server on one instance, and backups are up to you.
-3. **Keep Render free as a demo only**, accepting that data is wiped regularly.
+Both run `wrangler dev --env selfhost`, which loads only the keys listed under
+`env.selfhost.secrets.required` in `wrangler.jsonc` (from `.dev.vars`). A new key the Worker reads must be
+added there too, or it silently stays unset in local runs.
 
 ## Notes
 
