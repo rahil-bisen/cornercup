@@ -50,10 +50,9 @@ export const DEMO_TABLES = [
   { number: 6, seats: 6 },
 ];
 
-// [category, name, description, price in paise, emoji, available]. The five categories match the bundled
-// category photographs in public/defaults, and the item names match the photo map in
-// src/lib/menuImages.js, so items show a real photograph where one truthfully exists and their emoji
-// otherwise. One item is sold out so the demo can show how that looks to a guest.
+// [category, name, description, price in paise, emoji, available]. Items show the café's own uploaded
+// photograph when there is one and a placeholder tile otherwise (see src/lib/menuImages.js). One item is
+// sold out so the demo can show how that looks to a guest.
 export const DEMO_MENU = [
   ["Chai & Coffee", "Masala Chai", "Kadak chai with house masala, served in a kulhad.", 4000, "🫖", true],
   ["Chai & Coffee", "Filter Coffee", "South Indian degree coffee, frothed and poured tall.", 5000, "☕", true],

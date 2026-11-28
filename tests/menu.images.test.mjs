@@ -1,7 +1,7 @@
 // Stage 3B menu photography.
 //
-// The pure part exercises the guest's photograph ladder without a DOM (custom → category default →
-// emoji). The rest runs the real routes in the auth harness at :8790, whose Worker supplies an
+// The pure part exercises the guest's photograph rule without a DOM (the upload, otherwise the
+// placeholder). The rest runs the real routes in the auth harness at :8790, whose Worker supplies an
 // in-memory R2-compatible `IMAGES` binding and header-driven fault injection, so upload, replacement,
 // removal and every refusal are the production handlers against real D1 — never a mock of them.
 //
@@ -11,7 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { HARNESS_OWNER_PASSWORD } from "./harness/credentials.mjs";
-import { defaultImageFor, resolveItemImage } from "../src/lib/menuImages.js";
+import { resolveItemImage } from "../src/lib/menuImages.js";
 
 const AUTH = process.env.AUTH_HARNESS_URL || "http://127.0.0.1:8790";
 const JSON_HEADERS = { "content-type": "application/json" };
@@ -27,35 +27,17 @@ const skip = alive ? false : `auth harness not available at ${AUTH}`;
 
 /* ------------------------------------------------------------- the ladder */
 
-test("photograph ladder: category default, custom override, then the emoji", () => {
-  assert.equal(defaultImageFor("Chai & Coffee"), "/defaults/coffee.jpg");
-  assert.equal(defaultImageFor("Cold Drinks"), "/defaults/cold-drink.jpg");
-  assert.equal(defaultImageFor("Snacks"), "/defaults/snack.jpg");
-  assert.equal(defaultImageFor("Mains"), "/defaults/main.jpg");
-  assert.equal(defaultImageFor("Desserts"), "/defaults/dessert.jpg");
-  // Stage 3F removed the universal dish.jpg fallback: an unknown category has no photograph at all,
-  // because a picture of something else is worse than the item's own emoji.
-  assert.equal(defaultImageFor("Seasonal Specials"), null);
+test("photograph rule: the upload when there is one, otherwise the placeholder", () => {
+  // No upload: no photograph at all, so the page draws the placeholder tile.
+  assert.equal(resolveItemImage({ imageUrl: null }, "Mains"), null);
+  assert.equal(resolveItemImage({}, "Desserts"), null);
 
-  // No upload: the category default is drawn.
-  assert.equal(resolveItemImage({ imageUrl: null }, "Mains"), "/defaults/main.jpg");
-  assert.equal(resolveItemImage({}, "Desserts"), "/defaults/dessert.jpg");
-
-  // An upload wins over the default…
-  assert.equal(
-    resolveItemImage({ imageUrl: "/api/cafes/c/menu/1/image?v=1" }, "Mains"),
-    "/api/cafes/c/menu/1/image?v=1"
-  );
-
-  // …until it fails to load, which falls back to the default and then to the emoji (null).
+  // An upload is shown…
   const custom = "/api/cafes/c/menu/1/image?v=1";
-  assert.equal(resolveItemImage({ imageUrl: custom }, "Mains", new Set([custom])), "/defaults/main.jpg");
-  assert.equal(
-    resolveItemImage({ imageUrl: custom }, "Mains", new Set([custom, "/defaults/main.jpg"])),
-    null,
-    "when both photographs are broken the item shows its emoji"
-  );
-  assert.equal(resolveItemImage({}, "Mains", new Set(["/defaults/main.jpg"])), null);
+  assert.equal(resolveItemImage({ imageUrl: custom }, "Mains"), custom);
+
+  // …until it fails to load, which falls back to the placeholder rather than another dish's photo.
+  assert.equal(resolveItemImage({ imageUrl: custom }, "Mains", new Set([custom])), null);
 });
 
 /* --------------------------------------------------------------- fixtures */

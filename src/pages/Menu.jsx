@@ -4,7 +4,7 @@ import { api, cafePath, cafeSlug } from "../lib/api.js";
 import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../lib/config.js";
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { isCurrentScope, menuScope } from "../lib/menuScope.js";
-import { resolveItemImage } from "../lib/menuImages.js";
+import { placeholderInitial, resolveItemImage } from "../lib/menuImages.js";
 import { money } from "../lib/money.js";
 import { checkoutPaymentMethod, gatewayEnabled } from "../lib/payments.js";
 import CartSheet from "../components/CartSheet.jsx";
@@ -519,19 +519,21 @@ export default function Menu() {
                     <li key={item.id} className={`menu-item${item.available ? "" : " sold-out"}`}>
                       {(() => {
                         const src = resolveMenuImage(item, category.name);
-                        // A photograph is content, so it keeps real alt text; the emoji is decoration.
+                        // A photograph is content, so it keeps real alt text; the placeholder is decoration.
                         if (!src) {
                           return (
-                            <span className="menu-emoji" aria-hidden="true">
-                              {item.emoji}
+                            <span className="menu-thumb menu-thumb-placeholder" aria-hidden="true">
+                              {placeholderInitial(item)}
                             </span>
                           );
                         }
                         return (
-                          <span className="menu-emoji">
+                          <span className="menu-thumb">
                             <img
                               src={src}
                               alt={item.name}
+                              width="72"
+                              height="72"
                               loading="lazy"
                               decoding="async"
                               onError={() => markImageBroken(src)}
@@ -680,7 +682,7 @@ function SkeletonMenu() {
           <ul className="menu-list">
             {[0, 1, 2].map((row) => (
               <li key={row} className="menu-item">
-                <span className="menu-emoji skeleton" />
+                <span className="menu-thumb skeleton" />
                 <div className="menu-text">
                   <div className="skeleton-line w-60" />
                   <div className="skeleton-line w-90" />

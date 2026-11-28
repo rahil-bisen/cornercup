@@ -179,18 +179,9 @@ let lastUsedStep = null;
   const items = categories.flatMap((category) => category.items || []);
   check("guest menu browses with 200", menu.status === 200);
   check("menu has the 27 seeded items", items.length === 27, `${items.length} items in ${categories.length} categories`);
-  check("every seeded item falls back to a default image (imageUrl null)", items.every((item) => item.imageUrl === null));
+  check("no seeded item has a photograph until the café uploads one (imageUrl null)", items.every((item) => item.imageUrl === null));
   check("every item carries an emoji fallback", items.every((item) => typeof item.emoji === "string" && item.emoji.length > 0));
   firstItemId = items[0] ? items[0].id : null;
-
-  for (const image of ["coffee.jpg", "cold-drink.jpg", "snack.jpg", "main.jpg", "dessert.jpg"]) {
-    const res = await fetch(`${BASE}/defaults/${image}`);
-    check(
-      `default photograph /defaults/${image} is served`,
-      res.status === 200 && String(res.headers.get("content-type") || "").startsWith("image/"),
-      `${res.status} ${res.headers.get("content-type")}`
-    );
-  }
 
   const tableMenu = await call("GET", `${CAFE}/menu?table=1`);
   check(
