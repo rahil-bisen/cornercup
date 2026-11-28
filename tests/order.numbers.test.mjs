@@ -6,7 +6,11 @@ import assert from "node:assert/strict";
 import { HARNESS_OWNER_PASSWORD } from "./harness/credentials.mjs";
 
 const AUTH = process.env.AUTH_HARNESS_URL || "http://127.0.0.1:8790";
-const JSON_HEADERS = { "content-type": "application/json" };
+// This file sends many writes (20 simultaneous checkouts alone), so it uses its own client address:
+// the Worker's per-IP write ceiling is shared by every test that sends none, and CI runs the suite fast
+// enough for this file to tip that shared bucket over into 429s for the tests after it.
+const CLIENT = { "cf-connecting-ip": "203.0.113.11" };
+const JSON_HEADERS = { "content-type": "application/json", ...CLIENT };
 
 let alive = false;
 try {
@@ -97,7 +101,9 @@ test("the daily number never opens an order: lookups stay on the random id plus 
   try {
     const { order, trackToken } = await (await place(cafe)).json();
     const read = (id, token) =>
-      fetch(`${AUTH}/api/cafes/${cafe.slug}/orders/${encodeURIComponent(id)}`, token ? { headers: { "x-order-token": token } } : {});
+      fetch(`${AUTH}/api/cafes/${cafe.slug}/orders/${encodeURIComponent(id)}`, {
+        headers: token ? { ...CLIENT, "x-order-token": token } : CLIENT,
+      });
 
     for (const guess of [String(order.queueNo), `#${order.queueNo}`, "1", "%231"]) {
       assert.equal((await read(guess)).status, 404, `no order at ${guess}`);
@@ -115,7 +121,7 @@ test("the daily number never opens an order: lookups stay on the random id plus 
       body: JSON.stringify({ password: HARNESS_OWNER_PASSWORD }),
     });
     const cookie = (login.headers.getSetCookie?.() || [])[0]?.split(";")[0] || "";
-    const board = await (await fetch(`${AUTH}/api/cafes/${cafe.slug}/admin/orders`, { headers: { cookie } })).json();
+    const board = await (await fetch(`${AUTH}/api/cafes/${cafe.slug}/admin/orders`, { headers: { ...CLIENT, cookie } })).json();
     assert.equal(board.orders.find((o) => o.id === order.id).queueNo, order.queueNo);
   } finally {
     await clean(cafe);
