@@ -11,7 +11,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { ensureDb, resetEnsureDbForTests } from "../worker/db.js";
+import { ensureDb, resetEnsureDbForTests, SCHEMA_VERSION } from "../worker/db.js";
+import worker from "../worker/index.js";
 
 // D1-shaped binding over node:sqlite. Every call yields once before touching the database, so two
 // concurrent setups interleave the way two requests on one isolate do.
@@ -97,12 +98,48 @@ test("once setup has succeeded, later requests do no database work at all", asyn
   assert.equal(counter.calls, 0);
 });
 
+test("a new isolate reads the persisted schema version instead of rerunning setup", async () => {
+  resetEnsureDbForTests();
+  const db = new DatabaseSync(":memory:");
+  const counter = { calls: 0 };
+  const DB = fakeD1(db, counter);
+
+  await ensureDb(env(DB));
+  const state = db.prepare("SELECT version, idempotency_index_ready FROM app_schema_state WHERE id = 1").get();
+  assert.equal(state.version, SCHEMA_VERSION);
+  assert.equal(state.idempotency_index_ready, 1);
+
+  resetEnsureDbForTests();
+  counter.calls = 0;
+  await ensureDb(env(DB));
+  assert.equal(counter.calls, 1, "the next isolate only reads the persistent version marker");
+});
+
 test("a setup that fails only fails its own request; the next one succeeds", async () => {
   resetEnsureDbForTests();
   const broken = { prepare: () => ({ bind() { return this; }, run: async () => { throw new Error("D1 unavailable"); }, all: async () => { throw new Error("D1 unavailable"); }, first: async () => { throw new Error("D1 unavailable"); } }), batch: async () => { throw new Error("D1 unavailable"); } };
   await assert.rejects(() => ensureDb(env(broken)), /D1 unavailable/);
   const db = new DatabaseSync(":memory:");
   await ensureDb(env(fakeD1(db)));
+});
+
+test("a startup failure answers 503 and does not poison the next API request", async () => {
+  resetEnsureDbForTests();
+  const broken = {
+    prepare: () => ({ first: async () => { throw new Error("D1 unavailable"); } }),
+  };
+  const request = new Request("https://worker.test/api/health");
+  const first = await worker.fetch(request, env(broken), {});
+  assert.equal(first.status, 503);
+  assert.deepEqual(await first.json(), {
+    error: "Starting up, please wait…",
+    code: "STARTING_UP",
+  });
+
+  resetEnsureDbForTests();
+  const db = new DatabaseSync(":memory:");
+  const recovered = await worker.fetch(request, env(fakeD1(db)), {});
+  assert.equal(recovered.status, 200);
 });
 
 test("two first requests on an empty database both succeed and create one primary café", async () => {
@@ -129,4 +166,33 @@ test("two requests creating the primary café at the same moment do not fail on 
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM cafes").get().n, 1);
   assert.equal(results[0].value.slug, "corner-cup");
   assert.equal(results[1].value.slug, "corner-cup");
+});
+
+test("while ordering is paused by duplicate checkout keys, no marker is stored and every cold start re-checks", async () => {
+  const db = new DatabaseSync(":memory:");
+  const DB = fakeD1(db);
+
+  // A database from before the checkout index existed, holding two orders with the same key.
+  resetEnsureDbForTests();
+  await ensureDb(env(DB));
+  db.exec("DROP INDEX IF EXISTS idx_orders_idempotency_key");
+  db.exec("DELETE FROM app_schema_state");
+  const cafeId = db.prepare("SELECT id FROM cafes LIMIT 1").get().id;
+  const insert = db.prepare(
+    "INSERT INTO orders (id, cafe_id, table_id, table_label, created_at, updated_at, idempotency_key) VALUES (?, ?, 0, 'T', 'x', 'x', 'same-key')"
+  );
+  insert.run("DUPA", cafeId);
+  insert.run("DUPB", cafeId);
+
+  resetEnsureDbForTests();
+  await ensureDb(env(DB));
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM app_schema_state").get().n, 0, "no marker while not ready");
+
+  // Once the duplicate is resolved, the next cold start builds the index and records the version.
+  db.exec("DELETE FROM orders WHERE id = 'DUPB'");
+  resetEnsureDbForTests();
+  await ensureDb(env(DB));
+  const state = db.prepare("SELECT version, idempotency_index_ready FROM app_schema_state").get();
+  assert.equal(state.version, SCHEMA_VERSION);
+  assert.equal(state.idempotency_index_ready, 1);
 });

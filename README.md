@@ -103,6 +103,14 @@ only). Nothing in that list needs a build or a deploy.
 intentionally absent from the production Wrangler config: production starts without a café until an operator
 creates one using the real business details.
 
+## D1 schema versioning
+
+The Worker stores its initialized schema version in `app_schema_state`. A new isolate checks this marker and
+skips the schema, migration, index-validation and bootstrap work when the database is already current. When
+changing `SCHEMA`, `MIGRATIONS`, `POST_MIGRATIONS` or their startup bootstrap behavior, increment
+`SCHEMA_VERSION` in `worker/db.js`. Failed initialization is not cached, so a later request can retry; affected
+requests receive a temporary `503` rather than a generic server error.
+
 ## Run it locally
 
 ```bash

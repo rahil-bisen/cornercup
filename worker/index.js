@@ -7,9 +7,23 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/")) {
+      if (!env.DB) {
+        console.error("API startup error: D1 binding is not configured.");
+        return withSecurityHeaders(
+          json({ error: "Starting up, please wait…", code: "STARTING_UP" }, 503)
+        );
+      }
+
       try {
-        if (!env.DB) throw new Error("D1 is selected but the DB binding is not configured.");
         await ensureDb(env);
+      } catch (err) {
+        console.error("API startup error", err && err.stack ? err.stack : err);
+        return withSecurityHeaders(
+          json({ error: "Starting up, please wait…", code: "STARTING_UP" }, 503)
+        );
+      }
+
+      try {
         return withSecurityHeaders(await handleApi(request, env, url, ctx));
       } catch (err) {
         console.error("API error", err && err.stack ? err.stack : err);

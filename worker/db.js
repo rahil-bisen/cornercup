@@ -1,6 +1,14 @@
 import { hashPassword } from "./passwords.js";
 
+// Bump when SCHEMA, MIGRATIONS, POST_MIGRATIONS, or their startup bootstrap changes.
+export const SCHEMA_VERSION = 1;
+
 export const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS app_schema_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL,
+    idempotency_index_ready INTEGER NOT NULL DEFAULT 0
+  )`,
   // One row per café on this deployment. Everything a tenant can change about itself lives here,
   // so several clients can share one Worker and one database without sharing any of their data.
   `CREATE TABLE IF NOT EXISTS cafes (
@@ -330,23 +338,65 @@ export function isIdempotencyIndexReady() {
   return idempotencyIndexReady;
 }
 
-// Each request that arrives before setup has finished runs setup itself, and only a plain boolean is shared
-// across requests. On Cloudflare a promise belongs to the request that created it: sharing one setup
-// promise meant that when the first request was cancelled (the guest's browser gave up during a slow cold
-// start), every request waiting on it failed with "This promise was created by a request that has since
-// ended" -> 500. Captured on the live Worker on 2026-11-27.
-//
-// Running setup more than once is safe: every statement is idempotent (CREATE ... IF NOT EXISTS, ADD COLUMN
-// with duplicate-only forgiveness, guarded UPDATE/INSERT OR IGNORE), and it now costs a few round trips.
+// The D1 marker is shared by all isolates; the local boolean only avoids a repeat lookup in this isolate.
+// Never share an in-flight setup promise: on Cloudflare it belongs to its creating request and can be
+// cancelled along with it.
 export async function ensureDb(env) {
   if (ready) return;
+
+  const state = await readSchemaState(env);
+  if (state) {
+    const installedVersion = Number(state.version);
+    if (!Number.isInteger(installedVersion) || installedVersion < 0) {
+      throw new Error("The D1 schema version marker is invalid.");
+    }
+    if (installedVersion > SCHEMA_VERSION) {
+      throw new Error(
+        `D1 schema version ${installedVersion} is newer than this Worker supports (${SCHEMA_VERSION}).`
+      );
+    }
+    if (installedVersion === SCHEMA_VERSION) {
+      idempotencyIndexReady = Number(state.idempotency_index_ready) === 1;
+      ready = true;
+      return;
+    }
+  }
+
   await init(env);
+  // Ordering stays paused while the checkout index cannot be built (duplicate keys already stored).
+  // Recording the version in that state would skip the re-check on every later cold start, leaving
+  // ordering off until someone bumped SCHEMA_VERSION. So the marker is only written once the database is
+  // fully ready; until then each cold start runs the full setup again, exactly as before the marker.
+  if (!idempotencyIndexReady) {
+    ready = true;
+    return;
+  }
+  await env.DB.prepare(
+    "INSERT INTO app_schema_state (id, version, idempotency_index_ready) VALUES (1, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET version = excluded.version, " +
+      "idempotency_index_ready = excluded.idempotency_index_ready"
+  )
+    .bind(SCHEMA_VERSION, idempotencyIndexReady ? 1 : 0)
+    .run();
   ready = true;
+}
+
+async function readSchemaState(env) {
+  try {
+    return await env.DB.prepare(
+      "SELECT version, idempotency_index_ready FROM app_schema_state WHERE id = 1"
+    ).first();
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    if (/no such table:\s*(?:main\.)?app_schema_state\b/i.test(message)) return null;
+    throw err;
+  }
 }
 
 // Lets a test start from a cold isolate.
 export function resetEnsureDbForTests() {
   ready = false;
+  idempotencyIndexReady = false;
 }
 
 export function slugify(value) {

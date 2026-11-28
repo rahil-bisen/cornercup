@@ -1,0 +1,4 @@
+{
+  "_comment": "One entry per SCHEMA_VERSION in worker/db.js: the sha256 of JSON.stringify({ schema: SCHEMA, migrations: MIGRATIONS, post: POST_MIGRATIONS }). tests/schema.version.test.mjs explains when to add one.",
+  "1": "ceeafe245031e6cd28afa735e54523fee6fb0c35d92b909c40ecc76bec43f80f"
+}

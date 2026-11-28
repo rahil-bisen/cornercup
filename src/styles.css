@@ -57,6 +57,21 @@ body.sheet-open {
   overflow: hidden;
 }
 
+.startup-notice {
+  position: fixed;
+  z-index: 1000;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  text-align: center;
+}
+
 h1,
 h2,
 h3 {
