@@ -107,7 +107,7 @@ test("F-18: the public menu carries only what a guest orders from", { skip }, as
       for (const item of category.items) {
         assert.deepEqual(
           Object.keys(item).sort(),
-          ["available", "description", "emoji", "hasCustomImage", "id", "imageUrl", "name", "priceCents"],
+          ["available", "description", "diet", "emoji", "hasCustomImage", "id", "imageUrl", "name", "priceCents"],
           `item shape in ${category.name}`
         );
       }

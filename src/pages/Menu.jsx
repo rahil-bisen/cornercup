@@ -5,6 +5,8 @@ import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../l
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { isCurrentScope, menuScope } from "../lib/menuScope.js";
 import { placeholderInitial, resolveItemImage } from "../lib/menuImages.js";
+import { filterMenu, vegFilterUseful } from "../lib/menuFilter.js";
+import DietMark from "../components/DietMark.jsx";
 import { money } from "../lib/money.js";
 import { checkoutPaymentMethod, gatewayEnabled } from "../lib/payments.js";
 import CartSheet from "../components/CartSheet.jsx";
@@ -109,6 +111,13 @@ export default function Menu() {
   // A café that exists but has not added any items yet. Without this the page rendered its header over
   // an empty body, which reads as broken rather than "not ready".
   const menuEmpty = Boolean(data && !data.categories.some((category) => category.items.length > 0));
+  // "Veg only" is offered only when the menu marks diets and has something that is not veg.
+  const [vegOnly, setVegOnly] = useState(false);
+  const showVegFilter = Boolean(data && vegFilterUseful(data.categories));
+  const visibleCategories = useMemo(
+    () => (data ? filterMenu(data.categories, { vegOnly: showVegFilter && vegOnly }) : []),
+    [data, vegOnly, showVegFilter]
+  );
 
   // A table in the URL is the guest's explicit choice, so it beats anything remembered, and it is
   // remembered for this café only. A counter café has no tables, so it stores nothing.
@@ -197,15 +206,15 @@ export default function Menu() {
     const measure = () => {
       const rail = document.querySelector(".category-nav");
       const offset = (rail ? rail.getBoundingClientRect().height : 55) + 28;
-      let current = data.categories.length ? data.categories[0].name : "";
-      data.categories.forEach((category) => {
+      let current = visibleCategories.length ? visibleCategories[0].name : "";
+      visibleCategories.forEach((category) => {
         const section = document.getElementById(sectionId(category.name));
         if (section && section.getBoundingClientRect().top <= offset) current = category.name;
       });
       // The last section can be too short to ever reach the line above the rail, so at the end of the
       // page it wins regardless — otherwise the rail would claim a section the guest has scrolled past.
       const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
-      if (atEnd && data.categories.length) current = data.categories[data.categories.length - 1].name;
+      if (atEnd && visibleCategories.length) current = visibleCategories[visibleCategories.length - 1].name;
       setActiveCategory((previous) => (previous === current ? previous : current));
     };
     // A timer rather than requestAnimationFrame: frames stop being produced while a tab is hidden or
@@ -226,7 +235,7 @@ export default function Menu() {
       window.removeEventListener("resize", request);
       if (timer) clearTimeout(timer);
     };
-  }, [data]);
+  }, [data, visibleCategories]);
 
   useEffect(() => {
     if (carts[cartKey] === undefined) return;
@@ -487,7 +496,7 @@ export default function Menu() {
         <>
           <div className="category-nav-wrap">
             <nav className="category-nav" aria-label="Menu categories">
-              {data.categories.map((category) => {
+              {visibleCategories.map((category) => {
                 const current = activeCategory === category.name;
                 return (
                   <button
@@ -510,8 +519,28 @@ export default function Menu() {
             <span className="category-nav-fade" aria-hidden="true" />
           </div>
 
+          {showVegFilter && (
+            <div className="menu-tools">
+              <label className={`veg-toggle${vegOnly ? " on" : ""}`}>
+                <input type="checkbox" checked={vegOnly} onChange={(event) => setVegOnly(event.target.checked)} />
+                <DietMark diet="veg" />
+                <span>Veg only</span>
+              </label>
+            </div>
+          )}
+
+          {visibleCategories.length === 0 && (
+            <div className="state-card" role="status">
+              <h2>Nothing matches</h2>
+              <p className="muted">No items on this menu match your filters.</p>
+              <button type="button" className="btn ghost" onClick={() => setVegOnly(false)}>
+                Show the full menu
+              </button>
+            </div>
+          )}
+
           <div className="menu-sections">
-            {data.categories.map((category) => (
+            {visibleCategories.map((category) => (
               <section key={category.name} id={sectionId(category.name)} className="menu-section">
                 <h2>{category.name}</h2>
                 <ul className="menu-list">
@@ -543,7 +572,10 @@ export default function Menu() {
                       })()}
                       <div className="menu-text">
                         <div className="menu-title">
-                          <h3 className="menu-name">{item.name}</h3>
+                          <h3 className="menu-name">
+                            <DietMark diet={item.diet} />
+                            {item.name}
+                          </h3>
                           {!item.available && <span className="pill sold">Sold out</span>}
                         </div>
                         {item.description && <p className="menu-desc">{item.description}</p>}

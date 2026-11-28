@@ -6,6 +6,8 @@ import { cafeName, isCafeNotFound, refreshSiteConfig, useSiteConfigState } from 
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { clockTime, money, timeAgo } from "../lib/money.js";
 import { gatewayEnabled } from "../lib/payments.js";
+import DietMark from "../components/DietMark.jsx";
+import { placeholderInitial } from "../lib/menuImages.js";
 
 const WARM_MINUTES = 10;
 const LATE_MINUTES = 20;
@@ -1081,6 +1083,7 @@ function MenuTab({ call, csrfToken }) {
     price: "",
     emoji: "🍽️",
     available: true,
+    diet: "",
   });
   const [saving, setSaving] = useState(false);
   // A ref is the synchronous guard: two submits in the same tick both see `saving === false` in the
@@ -1168,7 +1171,7 @@ function MenuTab({ call, csrfToken }) {
         headers: { "x-csrf-token": csrfToken },
       });
       await load();
-      setAnnouncement(`Custom photo removed from ${item.name}. The category default is back.`);
+      setAnnouncement(`Custom photo removed from ${item.name}. Guests see the placeholder again.`);
     } catch (err) {
       setError(err.message);
       setAnnouncement(`We couldn't remove the photo for ${item.name}. ${err.message}`);
@@ -1238,13 +1241,14 @@ function MenuTab({ call, csrfToken }) {
       price: (item.priceCents / 100).toFixed(2),
       emoji: item.emoji,
       available: item.available,
+      diet: item.diet || "",
     });
     setNotice("");
     setAnnouncement(`Editing ${item.name}.`);
   };
 
   const resetForm = (category = "Coffee") =>
-    setForm({ name: "", category, description: "", price: "", emoji: "🍽️", available: true });
+    setForm({ name: "", category, description: "", price: "", emoji: "🍽️", available: true, diet: "" });
 
   const cancelEdit = () => {
     setEditItem(null);
@@ -1295,6 +1299,7 @@ function MenuTab({ call, csrfToken }) {
           emoji: form.emoji.trim() || "🍽️",
           priceCents,
           available: form.available,
+          diet: form.diet || null,
         }),
       });
       setEditItem(null);
@@ -1327,6 +1332,7 @@ function MenuTab({ call, csrfToken }) {
           description: form.description,
           emoji: form.emoji,
           priceCents: priceCentsFor(form.price),
+          diet: form.diet || null,
         }),
       });
       resetForm(form.category);
@@ -1373,13 +1379,16 @@ function MenuTab({ call, csrfToken }) {
                       ) : item.hasCustomImage && item.imageUrl ? (
                         <img src={item.imageUrl} alt="" />
                       ) : (
-                        item.emoji
+                        placeholderInitial(item)
                       )}
                     </span>
                     <div className="admin-item-text">
-                      <strong>{item.name}</strong>
+                      <strong>
+                        <DietMark diet={item.diet} />
+                        {item.name}
+                      </strong>
                       <p className="muted small">
-                        {money(item.priceCents)} · {pendingImage[item.id] ? "Preview (not saved)" : item.hasCustomImage ? "Custom photo" : "Default photo"}
+                        {money(item.priceCents)} · {pendingImage[item.id] ? "Preview (not saved)" : item.hasCustomImage ? "Custom photo" : "No photo yet"}
                       </p>
                     </div>
                     {/* One group, so a narrow screen can move every row control onto its own line
@@ -1532,6 +1541,15 @@ function MenuTab({ call, csrfToken }) {
               />
             </label>
           <label className="field">
+            <span>Food type</span>
+            <select value={form.diet} onChange={(event) => setForm({ ...form, diet: event.target.value })}>
+              <option value="">Not stated</option>
+              <option value="veg">Veg (green mark)</option>
+              <option value="nonveg">Non-veg (red mark)</option>
+              <option value="egg">Egg (brown mark)</option>
+            </select>
+          </label>
+          <label className="field">
             <span>Icon</span>
             <input
               value={form.emoji}
@@ -1606,6 +1624,15 @@ function MenuTab({ call, csrfToken }) {
                 onChange={(event) => setForm({ ...form, price: event.target.value })}
                 placeholder="6.50"
               />
+            </label>
+            <label className="field">
+              <span>Food type</span>
+              <select value={form.diet} onChange={(event) => setForm({ ...form, diet: event.target.value })}>
+                <option value="">Not stated</option>
+                <option value="veg">Veg (green mark)</option>
+                <option value="nonveg">Non-veg (red mark)</option>
+                <option value="egg">Egg (brown mark)</option>
+              </select>
             </label>
             <label className="field">
               <span>Icon</span>
