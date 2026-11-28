@@ -3253,3 +3253,20 @@ img {
 .cafe-grid {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
 }
+
+/* ============================================ everywhere: colour scheme and keyboard focus */
+
+:root {
+  color-scheme: light;
+}
+
+/* A visible focus ring on every interactive element a keyboard can reach, for anything that does not
+   already draw its own. Mouse and touch users never see it (:focus-visible). */
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}

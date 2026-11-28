@@ -1299,7 +1299,7 @@ function MenuTab({ call, csrfToken }) {
     const priceCents = priceCentsFor(form.price);
     if (!form.price.trim() || !Number.isSafeInteger(priceCents) || priceCents <= 0) {
       savingRef.current = false;
-      setError("Enter a price greater than zero, for example 6.50.");
+      setError("Enter a price greater than zero, for example 120.00.");
       return;
     }
     if (priceCents > 1_000_000) {
@@ -1559,7 +1559,7 @@ function MenuTab({ call, csrfToken }) {
                 step="0.10"
                 value={form.price}
                 onChange={(event) => setForm({ ...form, price: event.target.value })}
-                placeholder="6.50"
+                placeholder="120.00"
               />
             </label>
           <label className="field">
@@ -1644,7 +1644,7 @@ function MenuTab({ call, csrfToken }) {
                 step="0.10"
                 value={form.price}
                 onChange={(event) => setForm({ ...form, price: event.target.value })}
-                placeholder="6.50"
+                placeholder="120.00"
               />
             </label>
             <label className="field">
