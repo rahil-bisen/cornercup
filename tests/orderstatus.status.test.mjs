@@ -121,12 +121,12 @@ async function mount(order) {
   };
 }
 
-test("a new order thanks the guest, and a table order's big number is its order code", async () => {
+test("an order placed before daily numbers keeps its code as the big number", async () => {
   const page = await mount(TABLE_ORDER);
   try {
     assert.equal(page.heading(), "Thanks — your order is in!");
     assert.equal(page.eyebrow(), "Your order number");
-    assert.equal(page.queue(), "#ABC123", "the code staff can look up, shown large");
+    assert.equal(page.queue(), "Order #ABC123", "no daily number: the old code, shown large");
     assert.match(page.text(), /Table 1/);
     assert.deepEqual(page.stepTitles(), ["Received", "Preparing", "Ready", "Served"]);
     assert.equal(page.current(), "Received", "the current step is marked for assistive tech");
@@ -155,8 +155,8 @@ test("a pickup order is told to collect, and its queue number is the headline", 
   const ready = await mount({ ...PICKUP_ORDER, status: "ready" });
   try {
     assert.equal(ready.heading(), "Ready to collect");
-    assert.equal(ready.eyebrow(), "Your pickup number");
-    assert.equal(ready.queue(), "12", "the pickup number, not a table label");
+    assert.equal(ready.eyebrow(), "Your order number");
+    assert.equal(ready.queue(), "Order #12", "the daily number, not a table label");
   } finally {
     await ready.unmount();
   }
@@ -203,6 +203,17 @@ test("a dish's note is shown under it on the receipt", async () => {
   });
   try {
     assert.match(page.text(), /2× Masala Chai“less sugar”/);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a dine-in order with a daily number shows it large and in the tab title", async () => {
+  const page = await mount({ ...TABLE_ORDER, queueNo: 23, cafeName: "Chai Kona Café" });
+  try {
+    assert.equal(page.queue(), "Order #23");
+    assert.equal(document.title, "Order #23 · Chai Kona Café");
+    assert.doesNotMatch(page.queue(), /ABC123/, "the random code is not the headline");
   } finally {
     await page.unmount();
   }

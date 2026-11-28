@@ -4,6 +4,7 @@ import { api, cafePath } from "../lib/api.js";
 import { clockTime, money } from "../lib/money.js";
 import PaymentPanel from "../components/PaymentPanel.jsx";
 import { useCafeTitle } from "../lib/config.js";
+import { hasDailyNumber, orderLabel } from "../lib/orderNumber.js";
 
 // A guest watching their ticket polls less often than staff need to: fifteen seconds is well inside
 // the time it takes to make a coffee, and each poll is a read the limiter answers without a D1
@@ -76,7 +77,7 @@ export default function OrderStatus() {
   const [order, setOrder] = useState(null);
   const [error, setError] = useState("");
   // The order carries the café's name, so this page titles its tab without fetching the café config.
-  useCafeTitle(order && order.cafeName ? { cafe: { name: order.cafeName } } : null, order ? `Order #${order.id}` : "");
+  useCafeTitle(order && order.cafeName ? { cafe: { name: order.cafeName } } : null, order ? `Order ${orderLabel(order)}` : "");
 
   // The token travels in the fragment, so it never reaches a server log. It is what proves this browser
   // placed the order: the id alone is not a credential, and without one this page asks for staff help
@@ -214,16 +215,12 @@ export default function OrderStatus() {
       {/* The number a guest holds up for staff, or reads when it is called, is the largest thing on the
           page. A pickup order is called by its queue number; a table order is found by its code. */}
       <section className="order-ticket" aria-label="Your order number">
-        <p className="eyebrow">{pickup ? "Your pickup number" : "Your order number"}</p>
-        <p className="order-ticket-number">{pickup && order.queueNo != null ? order.queueNo : `#${order.id}`}</p>
+        <p className="eyebrow">Your order number</p>
+        <p className="order-ticket-number">Order {orderLabel(order)}</p>
         <p className="muted small">
-          {pickup && order.queueNo != null ? (
-            <>
-              Order #{order.id} · we&apos;ll call this number when it&apos;s ready
-            </>
-          ) : (
-            "Show this to staff if you need help with your order"
-          )}
+          {pickup && hasDailyNumber(order)
+            ? "We'll call this number when it's ready"
+            : "Show this to staff if you need help with your order"}
         </p>
       </section>
 
