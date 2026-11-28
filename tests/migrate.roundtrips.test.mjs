@@ -104,13 +104,14 @@ test("an up-to-date database is checked in a few round trips and no ADD COLUMN i
 test("a database missing one column gets exactly that column added", async () => {
   const db = freshSchema();
   await migrate(fakeD1(db));
-  // Rebuild menu_items without image_updated_at, as a database from before that release would be.
-  db.exec("ALTER TABLE menu_items DROP COLUMN image_updated_at");
+  // Drop menu_items' newest column (diet), as a database from before that release would be. The newest
+  // one, so re-adding it at the end of the table reproduces the reference column order exactly.
+  db.exec("ALTER TABLE menu_items DROP COLUMN diet");
 
   const env = fakeD1(db);
   await migrate(env);
   const alters = env.log.statements.filter((sql) => addColumnTarget(sql));
-  assert.deepEqual(alters, ["ALTER TABLE menu_items ADD COLUMN image_updated_at TEXT"]);
+  assert.deepEqual(alters, ["ALTER TABLE menu_items ADD COLUMN diet TEXT"]);
   assert.deepEqual(schemaOf(db), referenceSchema());
 });
 

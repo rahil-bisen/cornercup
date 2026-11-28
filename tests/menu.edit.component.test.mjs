@@ -282,6 +282,7 @@ test("saving sends one CSRF-protected PATCH with every edited field", async () =
       emoji: "☕",
       priceCents: 5550,
       available: false,
+      diet: null,
     });
 
     assert.equal(editForm(page.container), undefined, "the form closes after a successful save");

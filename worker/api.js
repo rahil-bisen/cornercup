@@ -997,7 +997,7 @@ async function getMenu(env, url, cafe) {
   }
 
   const { results } = await env.DB.prepare(
-    "SELECT id, category, name, description, price_cents, emoji, available, image_key, image_updated_at FROM menu_items WHERE cafe_id = ? ORDER BY sort ASC, name ASC"
+    "SELECT id, category, name, description, price_cents, emoji, available, diet, image_key, image_updated_at FROM menu_items WHERE cafe_id = ? ORDER BY sort ASC, name ASC"
   )
     .bind(cafe.id)
     .all();
@@ -1017,6 +1017,7 @@ async function getMenu(env, url, cafe) {
       priceCents: row.price_cents,
       emoji: row.emoji,
       available: Boolean(row.available),
+      diet: dietOf(row.diet),
       imageUrl: itemImageUrl(cafe, row.id, row.image_key, row.image_updated_at),
       hasCustomImage: Boolean(row.image_key),
     });
@@ -1062,7 +1063,7 @@ function getConfig(env, cafe) {
       email: settings.contactEmail,
       address: settings.contactAddress,
     },
-    service: { mode: settings.serviceMode },
+    service: { mode: settings.serviceMode, typicalWaitMin: settings.typicalWaitMin },
     // Whether this deployment can accept an order at all. Checkout fails closed with a 503 while no
     // tracking key is configured, so the menu says so up front instead of after the guest fills a cart.
     // A boolean only: it never reveals which secret is missing.
@@ -1155,13 +1156,17 @@ async function orderPayload(env, cafe, orderId) {
   if (!order) return null;
 
   const { results: items } = await env.DB.prepare(
-    "SELECT name, emoji, price_cents, qty FROM order_items WHERE order_id = ? ORDER BY id ASC"
+    "SELECT name, emoji, price_cents, qty, note FROM order_items WHERE order_id = ? ORDER BY id ASC"
   )
     .bind(orderId)
     .all();
 
   return {
     id: order.id,
+    // The café's public name, so the tracking page can title its tab without a second request, and
+    // the owner's usual wait in minutes (0 = not stated) so it can show an estimate.
+    cafeName: cafe.name,
+    typicalWaitMin: cafeSettings(cafe).typicalWaitMin,
     tableId: order.table_number == null ? null : order.table_number,
     tableLabel: order.table_label,
     queueNo: order.queue_no == null ? null : order.queue_no,
@@ -1175,6 +1180,7 @@ async function orderPayload(env, cafe, orderId) {
       emoji: item.emoji,
       priceCents: item.price_cents,
       qty: item.qty,
+      note: item.note || "",
     })),
   };
 }
@@ -1277,6 +1283,7 @@ async function createOrder(request, env, cafe) {
     note: normalized.note,
     paymentMethod: normalized.paymentMethod,
     wanted: normalized.wanted,
+    notes: normalized.notes,
   });
 
   const existing = await claimReadStatement(env, { cafeId: cafe.id, key: idempotencyKey }).first();
@@ -1431,6 +1438,7 @@ async function createOrder(request, env, cafe) {
         emoji: row.emoji,
         priceCents: row.price_cents,
         qty: normalized.wanted.get(row.id),
+        note: normalized.notes.get(row.id) || "",
       })),
     });
 
@@ -1511,6 +1519,7 @@ async function abandonCheckout(request, env, cafe, rawKey) {
     note: normalized.note,
     paymentMethod: normalized.paymentMethod,
     wanted: normalized.wanted,
+    notes: normalized.notes,
   });
   const now = new Date().toISOString();
 
@@ -1609,7 +1618,7 @@ async function getOrder(request, env, cafe, id) {
   if (!order) return json({ error: "We couldn't find that order." }, 404);
 
   const { results: items } = await env.DB.prepare(
-    "SELECT name, emoji, price_cents, qty FROM order_items WHERE order_id = ? ORDER BY id ASC"
+    "SELECT name, emoji, price_cents, qty, note FROM order_items WHERE order_id = ? ORDER BY id ASC"
   )
     .bind(id)
     .all();
@@ -1617,6 +1626,9 @@ async function getOrder(request, env, cafe, id) {
   return json({
     order: {
       id: order.id,
+      // As in orderPayload: the public café name for the tab title, and the owner's usual wait.
+      cafeName: cafe.name,
+      typicalWaitMin: cafeSettings(cafe).typicalWaitMin,
       tableId: order.table_number == null ? null : order.table_number,
       tableLabel: order.table_label,
       queueNo: order.queue_no == null ? null : order.queue_no,
@@ -1632,6 +1644,7 @@ async function getOrder(request, env, cafe, id) {
         emoji: item.emoji,
         priceCents: item.price_cents,
         qty: item.qty,
+        note: item.note || "",
       })),
     },
   });
@@ -3347,7 +3360,7 @@ async function adminOrders(env, cafe) {
     .all();
 
   const { results: items } = await env.DB.prepare(
-    "SELECT oi.order_id, oi.name, oi.emoji, oi.price_cents, oi.qty FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.cafe_id = ? AND (o.created_at >= ? OR o.status IN ('new', 'preparing', 'ready')) ORDER BY oi.id ASC"
+    "SELECT oi.order_id, oi.name, oi.emoji, oi.price_cents, oi.qty, oi.note FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.cafe_id = ? AND (o.created_at >= ? OR o.status IN ('new', 'preparing', 'ready')) ORDER BY oi.id ASC"
   )
     .bind(cafe.id, cutoff)
     .all();
@@ -3360,6 +3373,7 @@ async function adminOrders(env, cafe) {
       emoji: item.emoji,
       priceCents: item.price_cents,
       qty: item.qty,
+      note: item.note || "",
     });
   }
 
@@ -3636,6 +3650,14 @@ async function adminSaveSettings(request, env, cafe) {
     patch.contact_email = email;
   }
 
+  if (body.typicalWaitMin !== undefined) {
+    const wait = body.typicalWaitMin === null || body.typicalWaitMin === "" ? 0 : Number(body.typicalWaitMin);
+    if (!Number.isInteger(wait) || wait < 0 || wait > 120) {
+      return json({ error: "The usual wait should be a whole number of minutes, 0 to 120." }, 400);
+    }
+    patch.typical_wait_min = wait;
+  }
+
   if (body.contactAddress !== undefined) {
     const address = String(body.contactAddress).trim();
     if (address.length > 200) return json({ error: "That address is too long (200 characters max)." }, 400);
@@ -3780,9 +3802,23 @@ async function adminSaveSettings(request, env, cafe) {
   return json({ slug: updated.slug, settings: cafeSettings(updated) });
 }
 
+// Veg / non-veg / egg, as the owner set it. NULL (every item that predates the field) means "not
+// stated", which the menu shows as no mark at all rather than guessing.
+const DIETS = new Set(["veg", "nonveg", "egg"]);
+
+function dietOf(value) {
+  return DIETS.has(value) ? value : null;
+}
+
+// A diet in a request: absent or null clears it, anything else must be one of the three values.
+function parseDiet(value) {
+  if (value === undefined || value === null || value === "") return { ok: true, diet: null };
+  return DIETS.has(value) ? { ok: true, diet: value } : { ok: false };
+}
+
 async function adminMenu(env, cafe) {
   const { results } = await env.DB.prepare(
-    "SELECT id, category, name, description, price_cents, emoji, available, image_key, image_updated_at FROM menu_items WHERE cafe_id = ? ORDER BY sort ASC, name ASC"
+    "SELECT id, category, name, description, price_cents, emoji, available, diet, image_key, image_updated_at FROM menu_items WHERE cafe_id = ? ORDER BY sort ASC, name ASC"
   )
     .bind(cafe.id)
     .all();
@@ -3796,6 +3832,7 @@ async function adminMenu(env, cafe) {
       priceCents: row.price_cents,
       emoji: row.emoji,
       available: Boolean(row.available),
+      diet: dietOf(row.diet),
       imageUrl: itemImageUrl(cafe, row.id, row.image_key, row.image_updated_at),
       hasCustomImage: Boolean(row.image_key),
     })),
@@ -3815,8 +3852,10 @@ async function adminCreateItem(request, env, cafe) {
   const description = String(body.description || "").trim().slice(0, 160);
   const emoji = String(body.emoji || "🍽️").trim().slice(0, 8) || "🍽️";
   const priceCents = Math.round(Number(body.priceCents));
+  const diet = parseDiet(body.diet);
 
   if (!name) return json({ error: "Give the item a name." }, 400);
+  if (!diet.ok) return json({ error: "Choose veg, non-veg or egg." }, 400);
   if (!Number.isFinite(priceCents) || priceCents <= 0 || priceCents > 100000) {
     return json({ error: "Enter a price greater than zero." }, 400);
   }
@@ -3825,9 +3864,9 @@ async function adminCreateItem(request, env, cafe) {
     .bind(cafe.id)
     .first();
   const result = await env.DB.prepare(
-    "INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, available, sort) VALUES (?, ?, ?, ?, ?, ?, 1, ?)"
+    "INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, available, sort, diet) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)"
   )
-    .bind(cafe.id, category, name, description, priceCents, emoji, (max ? max.value : 0) + 10)
+    .bind(cafe.id, category, name, description, priceCents, emoji, (max ? max.value : 0) + 10, diet.diet)
     .run();
 
   return json({ id: result.meta ? result.meta.last_row_id : null }, 201);
@@ -3840,6 +3879,7 @@ const EDITABLE_MENU_FIELDS = new Set([
   "emoji",
   "available",
   "priceCents",
+  "diet",
 ]);
 
 async function adminUpdateItem(request, env, cafe, id) {
@@ -3864,7 +3904,7 @@ async function adminUpdateItem(request, env, cafe, id) {
   // Resolve the current row once, before applying anything. The item must belong to this café, and a
   // PATCH that touches nothing is still a no-op rather than a created row.
   const existing = await env.DB.prepare(
-    "SELECT id, category, name, description, price_cents, emoji, available FROM menu_items WHERE id = ? AND cafe_id = ?"
+    "SELECT id, category, name, description, price_cents, emoji, available, diet FROM menu_items WHERE id = ? AND cafe_id = ?"
   )
     .bind(id, cafe.id)
     .first();
@@ -3878,6 +3918,7 @@ async function adminUpdateItem(request, env, cafe, id) {
     emoji: existing.emoji,
     available: Boolean(existing.available),
     priceCents: existing.price_cents,
+    diet: dietOf(existing.diet),
   };
 
   // Types are checked, not coerced: a number where text belongs, or text where a price belongs, is a
@@ -3949,6 +3990,12 @@ async function adminUpdateItem(request, env, cafe, id) {
     }
     next.available = body.available;
   }
+  if ("diet" in body) {
+    touched = true;
+    const diet = parseDiet(body.diet);
+    if (!diet.ok) return json({ error: "Choose veg, non-veg or egg." }, 400);
+    next.diet = diet.diet;
+  }
 
   // A PATCH that carries no supported field would rewrite the row with its own current values and
   // report success; that hides a client bug. Only an explicit availability-only toggle (or any other
@@ -3956,9 +4003,9 @@ async function adminUpdateItem(request, env, cafe, id) {
   if (!touched) return json({ error: "Nothing to update." }, 400);
 
   const result = await env.DB.prepare(
-    "UPDATE menu_items SET category = ?, name = ?, description = ?, price_cents = ?, emoji = ?, available = ? WHERE id = ? AND cafe_id = ?"
+    "UPDATE menu_items SET category = ?, name = ?, description = ?, price_cents = ?, emoji = ?, available = ?, diet = ? WHERE id = ? AND cafe_id = ?"
   )
-    .bind(next.category, next.name, next.description, next.priceCents, next.emoji, next.available ? 1 : 0, id, cafe.id)
+    .bind(next.category, next.name, next.description, next.priceCents, next.emoji, next.available ? 1 : 0, next.diet, id, cafe.id)
     .run();
 
   if (!result.meta || !result.meta.changes) return json({ error: "Item not found." }, 404);
@@ -3976,11 +4023,11 @@ async function adminReseedMenu(request, env, cafe) {
   }
   const statements = [env.DB.prepare("DELETE FROM menu_items WHERE cafe_id = ?").bind(cafe.id)];
 
-  for (const [category, name, description, priceCents, emoji, sort] of SEED_MENU) {
+  for (const [category, name, description, priceCents, emoji, sort, diet] of SEED_MENU) {
     statements.push(
       env.DB.prepare(
-        "INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, available, sort) VALUES (?, ?, ?, ?, ?, ?, 1, ?)"
-      ).bind(cafe.id, category, name, description, priceCents, emoji, sort)
+        "INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, available, sort, diet) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)"
+      ).bind(cafe.id, category, name, description, priceCents, emoji, sort, diet || null)
     );
   }
 

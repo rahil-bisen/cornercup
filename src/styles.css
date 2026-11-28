@@ -2700,7 +2700,8 @@ img {
   opacity: 1;
 }
 
-.menu-item.sold-out .menu-emoji {
+.menu-item.sold-out .menu-emoji,
+.menu-item.sold-out .menu-thumb {
   filter: grayscale(1);
   opacity: 0.55;
 }
@@ -2842,4 +2843,430 @@ img {
   .menu-name {
     font-size: 1.05rem;
   }
+}
+
+/* ============================================ landing: scan the table's QR code */
+
+.scan-card {
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.scan-card h2 {
+  margin: 4px 0 0;
+}
+
+.scan-card p {
+  margin: 0;
+  max-width: 32ch;
+}
+
+.scan-icon {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  border-radius: 24px;
+  background: var(--cream-2);
+  color: var(--accent-dark);
+}
+
+.scan-card .landing-cta {
+  margin-top: 6px;
+}
+
+.scan-help {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  width: 100%;
+  color: var(--ink-soft);
+}
+
+/* ============================================ menu item picture: the owner's photo or one placeholder */
+
+.menu-thumb {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--cream-2);
+}
+
+.menu-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Every item without its own photo looks the same: a quiet tile with the item's initial. */
+.menu-thumb-placeholder {
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: linear-gradient(150deg, var(--cream-2), #fbeedd);
+  border: 1px solid var(--line);
+  user-select: none;
+}
+
+@media (min-width: 430px) {
+  .menu-thumb {
+    width: 72px;
+    height: 72px;
+  }
+}
+
+/* ============================================ veg / non-veg / egg mark and the "Veg only" switch */
+
+.diet-mark {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+.diet-veg {
+  color: #1e7b34;
+}
+
+.diet-nonveg {
+  color: #b3261e;
+}
+
+.diet-egg {
+  color: #8a5a14;
+}
+
+.menu-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.veg-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 0 16px 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.veg-toggle input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.veg-toggle.on {
+  border-color: #1e7b34;
+  background: #e8f3ea;
+  color: #14501f;
+}
+
+.veg-toggle:focus-within {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ============================================ menu search */
+
+.menu-search {
+  position: relative;
+  flex: 1 1 220px;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--ink-soft);
+  padding: 0 4px 0 14px;
+}
+
+.menu-search:focus-within {
+  border-color: var(--accent);
+  outline: 3px solid rgba(180, 80, 44, 0.25);
+}
+
+.menu-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--ink);
+  padding: 10px 8px;
+  outline: none;
+}
+
+.menu-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.menu-search-clear {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cream-2);
+  color: var(--ink);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ============================================ cart: summary line and per-dish notes */
+
+.sheet-summary {
+  margin: 0 0 4px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.sheet-line {
+  align-items: flex-start;
+}
+
+.sheet-line .stepper,
+.sheet-line .sheet-line-price {
+  margin-top: 2px;
+}
+
+.sheet-add-note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  font-size: 0.88rem;
+  color: var(--accent-dark);
+}
+
+.sheet-item-note {
+  display: block;
+  margin-top: 6px;
+}
+
+.sheet-item-note input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.sheet-item-note input:focus {
+  outline: 3px solid rgba(180, 80, 44, 0.25);
+  border-color: var(--accent);
+}
+
+/* ============================================ order confirmation: the number to show staff */
+
+.order-ticket {
+  margin: 14px 0 6px;
+  padding: 18px 16px;
+  border-radius: 20px;
+  border: 2px dashed var(--line);
+  background: var(--white);
+  text-align: center;
+  display: grid;
+  gap: 4px;
+}
+
+.order-ticket .eyebrow {
+  margin: 0;
+}
+
+.order-ticket-number {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(2.6rem, 14vw, 3.4rem);
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.order-ticket p.muted {
+  margin: 4px 0 0;
+}
+
+.wait-estimate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--sage-soft);
+  color: #24452f;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.receipt-item-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.order-item-note {
+  display: block;
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--accent-dark);
+}
+
+/* ============================================ staff screens: phones, tablets, touch */
+
+/* Form fields never push past their column on a narrow phone (the operator's "Add a café" grid used to
+   run off the right edge). */
+.field {
+  min-width: 0;
+}
+
+.field input,
+.field textarea,
+.field select {
+  width: 100%;
+  min-height: 44px;
+}
+
+.admin-tab {
+  min-height: 44px;
+}
+
+/* Phones: the header wraps instead of squeezing the café name into a column one word wide, and the
+   action buttons and tabs scroll sideways rather than overflowing the screen. */
+@media (max-width: 640px) {
+  .admin-top {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    gap: 10px;
+  }
+
+  .admin-brand {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .admin-top-actions {
+    flex: 1 1 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-top-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-top-actions .btn {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .admin-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 10px 16px 0;
+  }
+
+  .admin-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-tab {
+    flex: none;
+    white-space: nowrap;
+  }
+}
+
+/* Tablets and up: the order board is read from a step or two away, so tickets get bigger type and
+   stronger contrast. */
+@media (min-width: 700px) {
+  .order-card {
+    padding: 16px;
+    gap: 10px;
+  }
+
+  .order-table {
+    font-size: 1.45rem;
+  }
+
+  .order-id,
+  .order-meta {
+    font-size: 0.86rem;
+  }
+
+  .order-items {
+    font-size: 1.08rem;
+    gap: 4px;
+    color: var(--ink);
+  }
+
+  .order-items .qty {
+    min-width: 34px;
+    font-size: 1.08rem;
+  }
+
+  .order-note {
+    font-size: 0.95rem;
+  }
+
+  .board-col h2 {
+    font-size: 0.95rem;
+  }
+}
+
+/* The operator's café cards hold a name, an address and two actions, so they get a wider column than
+   a table chip and run full width on a phone. */
+.cafe-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+}
+
+/* ============================================ everywhere: colour scheme and keyboard focus */
+
+:root {
+  color-scheme: light;
+}
+
+/* A visible focus ring on every interactive element a keyboard can reach, for anything that does not
+   already draw its own. Mouse and touch users never see it (:focus-visible). */
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
 }

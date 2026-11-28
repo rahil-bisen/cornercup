@@ -268,7 +268,7 @@ test("A-2: picking a photo previews it, Cancel restores the default, and the cha
 
     await page.click(cancel);
     assert.doesNotMatch(row.textContent, /Preview \(not saved\)/);
-    assert.match(row.textContent, /Default photo/);
+    assert.match(row.textContent, /No photo yet/);
     assert.match(row.querySelector(".admin-item-photo button").textContent, /Upload \/ Replace/);
     assert.match(liveRegion(page.container).textContent, /Preview cancelled for Masala Chai/);
   } finally {

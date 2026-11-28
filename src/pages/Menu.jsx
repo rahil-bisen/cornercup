@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, cafePath, cafeSlug } from "../lib/api.js";
-import { cafeName, isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../lib/config.js";
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { isCurrentScope, menuScope } from "../lib/menuScope.js";
-import { resolveItemImage } from "../lib/menuImages.js";
+import { placeholderInitial, resolveItemImage } from "../lib/menuImages.js";
+import { filterMenu, searchUseful, vegFilterUseful } from "../lib/menuFilter.js";
+import DietMark from "../components/DietMark.jsx";
 import { money } from "../lib/money.js";
 import { checkoutPaymentMethod, gatewayEnabled } from "../lib/payments.js";
 import CartSheet from "../components/CartSheet.jsx";
@@ -26,6 +28,7 @@ export default function Menu() {
   const cafeKey = cafeSlug() || "cafe";
   const { config, error: configError, retry: retryConfig } = useSiteConfigState();
   const cafe = cafeName(config);
+  useCafeTitle(config, "Menu", isCafeNotFound(configError));
   // Set by the café (SERVICE_MODE=counter): no table to scan, the guest gets a pickup number instead.
   const counterService = Boolean(config && config.service && config.service.mode === "counter");
   // Tables are remembered per café: two outlets sharing a browser must never borrow each other's table.
@@ -62,6 +65,15 @@ export default function Menu() {
     });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [note, setNote] = useState("");
+  // A note per dish ("less sugar"), keyed by item id. Only lines still in the cart are sent.
+  const [itemNotes, setItemNotes] = useState({});
+  const setItemNote = (itemId, value) =>
+    setItemNotes((current) => {
+      const next = { ...current };
+      if (value) next[itemId] = value;
+      else delete next[itemId];
+      return next;
+    });
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState("");
   const [resolvedOrder, setResolvedOrder] = useState(null);
@@ -108,6 +120,23 @@ export default function Menu() {
   // A café that exists but has not added any items yet. Without this the page rendered its header over
   // an empty body, which reads as broken rather than "not ready".
   const menuEmpty = Boolean(data && !data.categories.some((category) => category.items.length > 0));
+  // "Veg only" is offered only when the menu marks diets and has something that is not veg.
+  const [vegOnly, setVegOnly] = useState(false);
+  const showVegFilter = Boolean(data && vegFilterUseful(data.categories));
+  // Search appears once the menu is long enough to need it (more than 15 items).
+  const [query, setQuery] = useState("");
+  const showSearch = Boolean(data && searchUseful(data.categories));
+  const activeQuery = showSearch ? query : "";
+  const visibleCategories = useMemo(
+    () => (data ? filterMenu(data.categories, { vegOnly: showVegFilter && vegOnly, query: activeQuery }) : []),
+    [data, vegOnly, showVegFilter, activeQuery]
+  );
+  const visibleCount = visibleCategories.reduce((count, category) => count + category.items.length, 0);
+  const filtering = Boolean(activeQuery.trim()) || (showVegFilter && vegOnly);
+  const clearFilters = () => {
+    setQuery("");
+    setVegOnly(false);
+  };
 
   // A table in the URL is the guest's explicit choice, so it beats anything remembered, and it is
   // remembered for this café only. A counter café has no tables, so it stores nothing.
@@ -196,15 +225,15 @@ export default function Menu() {
     const measure = () => {
       const rail = document.querySelector(".category-nav");
       const offset = (rail ? rail.getBoundingClientRect().height : 55) + 28;
-      let current = data.categories.length ? data.categories[0].name : "";
-      data.categories.forEach((category) => {
+      let current = visibleCategories.length ? visibleCategories[0].name : "";
+      visibleCategories.forEach((category) => {
         const section = document.getElementById(sectionId(category.name));
         if (section && section.getBoundingClientRect().top <= offset) current = category.name;
       });
       // The last section can be too short to ever reach the line above the rail, so at the end of the
       // page it wins regardless — otherwise the rail would claim a section the guest has scrolled past.
       const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
-      if (atEnd && data.categories.length) current = data.categories[data.categories.length - 1].name;
+      if (atEnd && visibleCategories.length) current = visibleCategories[visibleCategories.length - 1].name;
       setActiveCategory((previous) => (previous === current ? previous : current));
     };
     // A timer rather than requestAnimationFrame: frames stop being produced while a tab is hidden or
@@ -225,7 +254,27 @@ export default function Menu() {
       window.removeEventListener("resize", request);
       if (timer) clearTimeout(timer);
     };
-  }, [data]);
+  }, [data, visibleCategories]);
+
+  // The rail scrolls sideways, so the highlighted category can sit off-screen ("Desserts" while the
+  // guest reads desserts). Bring it into view whenever it changes, centred, and only when it is not
+  // already fully visible, so the rail does not twitch on every small scroll.
+  const categoryRail = useRef(null);
+  useEffect(() => {
+    const rail = categoryRail.current;
+    if (!rail || !activeCategory) return;
+    const pill = [...rail.querySelectorAll("button")].find((button) => button.textContent === activeCategory);
+    if (!pill || typeof rail.scrollBy !== "function") return;
+    const railBox = rail.getBoundingClientRect();
+    const pillBox = pill.getBoundingClientRect();
+    if (pillBox.left >= railBox.left + 8 && pillBox.right <= railBox.right - 8) return;
+    const reduceMotion =
+      typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rail.scrollBy({
+      left: pillBox.left - railBox.left - (railBox.width - pillBox.width) / 2,
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, [activeCategory]);
 
   useEffect(() => {
     if (carts[cartKey] === undefined) return;
@@ -280,7 +329,14 @@ export default function Menu() {
     ...(activeTable ? { tableId: Number(activeTable) } : {}),
     note,
     paymentMethod: checkoutPaymentMethod(config),
-    items: lines.map((line) => ({ itemId: line.item.id, qty: line.qty })).sort((a, b) => a.itemId - b.itemId),
+    // A line carries `note` only when the guest wrote one, so a cart without item notes sends exactly
+    // the body it always did (and a pending checkout from before notes still matches it).
+    items: lines
+      .map((line) => {
+        const itemNote = String(itemNotes[line.item.id] || "").trim();
+        return itemNote ? { itemId: line.item.id, qty: line.qty, note: itemNote } : { itemId: line.item.id, qty: line.qty };
+      })
+      .sort((a, b) => a.itemId - b.itemId),
   });
 
   // A reload rebuilds the pending body from the stored note, so an untouched cart is the same checkout.
@@ -290,6 +346,11 @@ export default function Menu() {
     try {
       const parsed = JSON.parse(pending.body);
       if (typeof parsed.note === "string") setNote(parsed.note);
+      if (Array.isArray(parsed.items)) {
+        const restored = {};
+        for (const line of parsed.items) if (line && typeof line.note === "string" && line.note) restored[line.itemId] = line.note;
+        setItemNotes(restored);
+      }
     } catch {
       /* a corrupt entry is replaced only after a conclusive reply */
     }
@@ -344,6 +405,7 @@ export default function Menu() {
       localStorage.removeItem(cartKey);
       setCart({});
       setNote("");
+      setItemNotes({});
       setSheetOpen(false);
       navigate(orderLink(payload.order, payload.trackToken, activeTable));
     } catch (err) {
@@ -485,8 +547,8 @@ export default function Menu() {
       {data && !menuEmpty && (
         <>
           <div className="category-nav-wrap">
-            <nav className="category-nav" aria-label="Menu categories">
-              {data.categories.map((category) => {
+            <nav className="category-nav" aria-label="Menu categories" ref={categoryRail}>
+              {visibleCategories.map((category) => {
                 const current = activeCategory === category.name;
                 return (
                   <button
@@ -509,8 +571,60 @@ export default function Menu() {
             <span className="category-nav-fade" aria-hidden="true" />
           </div>
 
+          {(showSearch || showVegFilter) && (
+            <div className="menu-tools">
+              {showSearch && (
+                <div className="menu-search">
+                  <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false">
+                    <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                    <path d="M13 13l4.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <input
+                    type="search"
+                    inputMode="search"
+                    enterKeyHint="search"
+                    autoComplete="off"
+                    aria-label="Search the menu"
+                    placeholder="Search the menu"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                  {query && (
+                    <button type="button" className="menu-search-clear" aria-label="Clear search" onClick={() => setQuery("")}>
+                      ×
+                    </button>
+                  )}
+                </div>
+              )}
+              {showVegFilter && (
+                <label className={`veg-toggle${vegOnly ? " on" : ""}`}>
+                  <input type="checkbox" checked={vegOnly} onChange={(event) => setVegOnly(event.target.checked)} />
+                  <DietMark diet="veg" />
+                  <span>Veg only</span>
+                </label>
+              )}
+            </div>
+          )}
+
+          {/* Announced, so a screen-reader user hears how many dishes are left after typing. */}
+          <p className="sr-only" role="status" aria-live="polite">
+            {filtering ? `${visibleCount} ${visibleCount === 1 ? "item" : "items"} shown` : ""}
+          </p>
+
+          {visibleCategories.length === 0 && (
+            <div className="state-card">
+              <h2>Nothing matches</h2>
+              <p className="muted">
+                {activeQuery.trim() ? `No items match “${activeQuery.trim()}”.` : "No items on this menu match your filters."}
+              </p>
+              <button type="button" className="btn ghost" onClick={clearFilters}>
+                Show the full menu
+              </button>
+            </div>
+          )}
+
           <div className="menu-sections">
-            {data.categories.map((category) => (
+            {visibleCategories.map((category) => (
               <section key={category.name} id={sectionId(category.name)} className="menu-section">
                 <h2>{category.name}</h2>
                 <ul className="menu-list">
@@ -518,19 +632,21 @@ export default function Menu() {
                     <li key={item.id} className={`menu-item${item.available ? "" : " sold-out"}`}>
                       {(() => {
                         const src = resolveMenuImage(item, category.name);
-                        // A photograph is content, so it keeps real alt text; the emoji is decoration.
+                        // A photograph is content, so it keeps real alt text; the placeholder is decoration.
                         if (!src) {
                           return (
-                            <span className="menu-emoji" aria-hidden="true">
-                              {item.emoji}
+                            <span className="menu-thumb menu-thumb-placeholder" aria-hidden="true">
+                              {placeholderInitial(item)}
                             </span>
                           );
                         }
                         return (
-                          <span className="menu-emoji">
+                          <span className="menu-thumb">
                             <img
                               src={src}
                               alt={item.name}
+                              width="72"
+                              height="72"
                               loading="lazy"
                               decoding="async"
                               onError={() => markImageBroken(src)}
@@ -540,7 +656,10 @@ export default function Menu() {
                       })()}
                       <div className="menu-text">
                         <div className="menu-title">
-                          <h3 className="menu-name">{item.name}</h3>
+                          <h3 className="menu-name">
+                            <DietMark diet={item.diet} />
+                            {item.name}
+                          </h3>
                           {!item.available && <span className="pill sold">Sold out</span>}
                         </div>
                         {item.description && <p className="menu-desc">{item.description}</p>}
@@ -622,6 +741,8 @@ export default function Menu() {
         lines={lines}
         note={note}
         onNote={setNote}
+        itemNotes={itemNotes}
+        onItemNote={setItemNote}
         onQty={setQty}
         onClose={() => setSheetOpen(false)}
         onPlace={placeOrder}
@@ -679,7 +800,7 @@ function SkeletonMenu() {
           <ul className="menu-list">
             {[0, 1, 2].map((row) => (
               <li key={row} className="menu-item">
-                <span className="menu-emoji skeleton" />
+                <span className="menu-thumb skeleton" />
                 <div className="menu-text">
                   <div className="skeleton-line w-60" />
                   <div className="skeleton-line w-90" />

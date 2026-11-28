@@ -102,3 +102,35 @@ test("a pending key survives a changed cart and is retired only by a terminal an
   assert.equal(readCheckout(storageKey), null);
   assert.notEqual(openCheckout(storageKey, changed).key, first.key, "a new checkout gets a fresh key");
 });
+
+/* ------------------------------------------------------------ per-dish notes */
+
+test("per-dish notes are trimmed, capped, kept per item and joined when an item repeats", () => {
+  const long = "x".repeat(200);
+  const out = normalizeCheckoutBody(
+    {
+      tableId: 1,
+      items: [
+        { itemId: 7, qty: 1, note: "  less   sugar " },
+        { itemId: 7, qty: 1, note: "extra hot" },
+        { itemId: 4, qty: 1, note: long },
+        { itemId: 5, qty: 1 },
+      ],
+    },
+    { counter: false }
+  );
+  assert.equal(out.notes.get(7), "less sugar; extra hot");
+  assert.equal(out.notes.get(4).length, 120);
+  assert.equal(out.notes.has(5), false);
+  assert.equal(normalizeCheckoutBody({ items: [{ itemId: 1, qty: 1, note: 42 }] }, { counter: true }).error, "item");
+});
+
+test("a cart without dish notes hashes exactly as before notes existed; a note changes the hash", async () => {
+  const base = { cafeId: 1, counter: false, tableId: 1, note: "", paymentMethod: "counter" };
+  const plain = normalizeCheckoutBody({ tableId: 1, items: [{ itemId: 2, qty: 1 }] }, { counter: false });
+  const legacy = await orderFingerprint({ ...base, wanted: plain.wanted });
+  assert.equal(await orderFingerprint({ ...base, wanted: plain.wanted, notes: plain.notes }), legacy);
+
+  const noted = normalizeCheckoutBody({ tableId: 1, items: [{ itemId: 2, qty: 1, note: "no ice" }] }, { counter: false });
+  assert.notEqual(await orderFingerprint({ ...base, wanted: noted.wanted, notes: noted.notes }), legacy);
+});

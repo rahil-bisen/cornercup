@@ -137,7 +137,7 @@ test("the token is sent as a header, never in the path or query", async () => {
     assert.equal(call.url, "/api/cafes/cafe-a/orders/ABC123", "a scoped path with no token in it");
     assert.ok(!call.url.includes(TOKEN), "the token never appears in a URL");
     assert.equal(call.headers["x-order-token"], TOKEN, "the token travels in the header");
-    assert.match(page.text(), /Order confirmed/);
+    assert.match(page.text(), /your order is in/);
     assert.match(page.text(), /ABC123/);
   } finally {
     await page.unmount();

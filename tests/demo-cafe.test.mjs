@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { MIGRATIONS, POST_MIGRATIONS, SCHEMA } from "../worker/db.js";
-import { defaultImageFor, resolveItemImage } from "../src/lib/menuImages.js";
+import { resolveItemImage } from "../src/lib/menuImages.js";
 import { DEMO_CAFE, DEMO_MENU, DEMO_SLUG, DEMO_TABLES, buildDemoStatements } from "../scripts/demo-cafe.mjs";
 
 function freshDb() {
@@ -91,9 +91,8 @@ test("a first run creates the demo café exactly as specified, with no password"
   assert.ok(items.every((i) => Number.isInteger(i.price_cents) && i.price_cents > 0));
   const categories = [...new Set(items.map((i) => i.category))];
   assert.ok(categories.length >= 4, "the menu has categories");
-  for (const category of categories) assert.ok(defaultImageFor(category), `${category} has a bundled photograph`);
-  const withPhoto = items.filter((i) => resolveItemImage({ name: i.name }, i.category));
-  assert.ok(withPhoto.length >= items.length / 2, `most items show a photograph (${withPhoto.length}/${items.length})`);
+  // No item borrows a stock photograph: until the café uploads its own, every item shows the placeholder.
+  assert.equal(items.filter((i) => resolveItemImage({ name: i.name }, i.category)).length, 0);
 });
 
 test("a reset clears the demo's orders and edits but keeps its password and other cafés untouched", () => {

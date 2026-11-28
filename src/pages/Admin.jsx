@@ -6,6 +6,8 @@ import { cafeName, isCafeNotFound, refreshSiteConfig, useSiteConfigState } from 
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { clockTime, money, timeAgo } from "../lib/money.js";
 import { gatewayEnabled } from "../lib/payments.js";
+import DietMark from "../components/DietMark.jsx";
+import { placeholderInitial } from "../lib/menuImages.js";
 
 const WARM_MINUTES = 10;
 const LATE_MINUTES = 20;
@@ -290,7 +292,6 @@ function AdminLogin({ onSignIn, ownerAuth }) {
               autoComplete="current-password"
               value={pin}
               onChange={(event) => setPin(event.target.value)}
-              placeholder="••••"
               autoFocus
             />
           </label>
@@ -680,7 +681,9 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
           <div className="stat">
             <span>Average bill</span>
             <strong>{money(stats.averageCents)}</strong>
-            <em>{stats.orders} orders today</em>
+            <em>
+              {stats.orders} {stats.orders === 1 ? "order" : "orders"} today
+            </em>
           </div>
         </div>
       )}
@@ -766,7 +769,10 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
                       {order.items.map((item, index) => (
                         <li key={`${order.id}-${index}`}>
                           <span className="qty">{item.qty}×</span>
-                          <span>{item.name}</span>
+                          <span>
+                            {item.name}
+                            {item.note && <span className="order-item-note">“{item.note}”</span>}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -924,6 +930,7 @@ function SettingsTab({ call, onSaved }) {
           contactPhone: form.contactPhone,
           contactEmail: form.contactEmail,
           contactAddress: form.contactAddress,
+          typicalWaitMin: form.typicalWaitMin === "" ? 0 : Number(form.typicalWaitMin),
           // The current password is required by the server whenever a new one is sent, so a session
           // alone cannot change the credential.
           ...(form.password
@@ -1019,6 +1026,23 @@ function SettingsTab({ call, onSaved }) {
         </label>
 
         <label className="field">
+          <span>Usual wait for an order (minutes)</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="0"
+            max="120"
+            step="1"
+            value={form.typicalWaitMin ?? 0}
+            onChange={(event) => update("typicalWaitMin", event.target.value)}
+            aria-describedby="typical-wait-help"
+          />
+          <small id="typical-wait-help" className="muted small">
+            Guests see &ldquo;usually ready in about this long&rdquo; while they wait. Leave at 0 to show no estimate.
+          </small>
+        </label>
+
+        <label className="field">
           <span>Change owner password</span>
           <input
             type="password"
@@ -1081,6 +1105,7 @@ function MenuTab({ call, csrfToken }) {
     price: "",
     emoji: "🍽️",
     available: true,
+    diet: "",
   });
   const [saving, setSaving] = useState(false);
   // A ref is the synchronous guard: two submits in the same tick both see `saving === false` in the
@@ -1159,7 +1184,7 @@ function MenuTab({ call, csrfToken }) {
     }
   };
   const removeImage = async (item) => {
-    if (!window.confirm("Remove the custom photo? The category default will be used.")) return;
+    if (!window.confirm("Remove this photo? Guests will see the plain placeholder until you upload another.")) return;
     setImageBusy(item.id);
     setError("");
     try {
@@ -1168,7 +1193,7 @@ function MenuTab({ call, csrfToken }) {
         headers: { "x-csrf-token": csrfToken },
       });
       await load();
-      setAnnouncement(`Custom photo removed from ${item.name}. The category default is back.`);
+      setAnnouncement(`Custom photo removed from ${item.name}. Guests see the placeholder again.`);
     } catch (err) {
       setError(err.message);
       setAnnouncement(`We couldn't remove the photo for ${item.name}. ${err.message}`);
@@ -1238,13 +1263,14 @@ function MenuTab({ call, csrfToken }) {
       price: (item.priceCents / 100).toFixed(2),
       emoji: item.emoji,
       available: item.available,
+      diet: item.diet || "",
     });
     setNotice("");
     setAnnouncement(`Editing ${item.name}.`);
   };
 
   const resetForm = (category = "Coffee") =>
-    setForm({ name: "", category, description: "", price: "", emoji: "🍽️", available: true });
+    setForm({ name: "", category, description: "", price: "", emoji: "🍽️", available: true, diet: "" });
 
   const cancelEdit = () => {
     setEditItem(null);
@@ -1273,7 +1299,7 @@ function MenuTab({ call, csrfToken }) {
     const priceCents = priceCentsFor(form.price);
     if (!form.price.trim() || !Number.isSafeInteger(priceCents) || priceCents <= 0) {
       savingRef.current = false;
-      setError("Enter a price greater than zero, for example 6.50.");
+      setError("Enter a price greater than zero, for example 120.00.");
       return;
     }
     if (priceCents > 1_000_000) {
@@ -1295,6 +1321,7 @@ function MenuTab({ call, csrfToken }) {
           emoji: form.emoji.trim() || "🍽️",
           priceCents,
           available: form.available,
+          diet: form.diet || null,
         }),
       });
       setEditItem(null);
@@ -1327,6 +1354,7 @@ function MenuTab({ call, csrfToken }) {
           description: form.description,
           emoji: form.emoji,
           priceCents: priceCentsFor(form.price),
+          diet: form.diet || null,
         }),
       });
       resetForm(form.category);
@@ -1373,13 +1401,16 @@ function MenuTab({ call, csrfToken }) {
                       ) : item.hasCustomImage && item.imageUrl ? (
                         <img src={item.imageUrl} alt="" />
                       ) : (
-                        item.emoji
+                        placeholderInitial(item)
                       )}
                     </span>
                     <div className="admin-item-text">
-                      <strong>{item.name}</strong>
+                      <strong>
+                        <DietMark diet={item.diet} />
+                        {item.name}
+                      </strong>
                       <p className="muted small">
-                        {money(item.priceCents)} · {pendingImage[item.id] ? "Preview (not saved)" : item.hasCustomImage ? "Custom photo" : "Default photo"}
+                        {money(item.priceCents)} · {pendingImage[item.id] ? "Preview (not saved)" : item.hasCustomImage ? "Custom photo" : "No photo yet"}
                       </p>
                     </div>
                     {/* One group, so a narrow screen can move every row control onto its own line
@@ -1528,9 +1559,18 @@ function MenuTab({ call, csrfToken }) {
                 step="0.10"
                 value={form.price}
                 onChange={(event) => setForm({ ...form, price: event.target.value })}
-                placeholder="6.50"
+                placeholder="120.00"
               />
             </label>
+          <label className="field">
+            <span>Food type</span>
+            <select value={form.diet} onChange={(event) => setForm({ ...form, diet: event.target.value })}>
+              <option value="">Not stated</option>
+              <option value="veg">Veg (green mark)</option>
+              <option value="nonveg">Non-veg (red mark)</option>
+              <option value="egg">Egg (brown mark)</option>
+            </select>
+          </label>
           <label className="field">
             <span>Icon</span>
             <input
@@ -1604,8 +1644,17 @@ function MenuTab({ call, csrfToken }) {
                 step="0.10"
                 value={form.price}
                 onChange={(event) => setForm({ ...form, price: event.target.value })}
-                placeholder="6.50"
+                placeholder="120.00"
               />
+            </label>
+            <label className="field">
+              <span>Food type</span>
+              <select value={form.diet} onChange={(event) => setForm({ ...form, diet: event.target.value })}>
+                <option value="">Not stated</option>
+                <option value="veg">Veg (green mark)</option>
+                <option value="nonveg">Non-veg (red mark)</option>
+                <option value="egg">Egg (brown mark)</option>
+              </select>
             </label>
             <label className="field">
               <span>Icon</span>

@@ -1,42 +1,26 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, cafePath } from "../lib/api.js";
-import { cafeName, isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import { Link, Navigate } from "react-router-dom";
+import { cafePath, cafeSlug } from "../lib/api.js";
+import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../lib/config.js";
 import { gatewayEnabled } from "../lib/payments.js";
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import SiteFooter from "../components/SiteFooter.jsx";
 
-// The first screen a guest sees after scanning a table QR code, so it is built mobile-first:
-// one thumb-reachable primary action, large table targets, and copy that fits a 360px phone.
+// The page a guest reaches at /c/<slug> without a table: a table QR code opens the menu directly, so
+// anyone here typed the address or followed a shared link. A table café asks them to scan the code on
+// their table (which is how the kitchen knows where to bring the order) rather than letting them pick
+// any table from a list; a counter café has nothing to scan, so it goes straight to the menu.
 export default function Landing() {
-  const [tables, setTables] = useState([]);
-  const [loadingTables, setLoadingTables] = useState(true);
-  // Bumped by "Try again", so the table list is fetched again together with the café config.
-  const [tablesAttempt, setTablesAttempt] = useState(0);
   const { config, error: configError, retry: retryConfig } = useSiteConfigState();
   const cafe = cafeName(config);
-  // Counter-service cafés have no tables to scan, so the page sells pickup instead of table service.
+  useCafeTitle(config, "", isCafeNotFound(configError));
+  // Counter-service cafés have no tables to scan, so they skip this page for the menu.
   const counterService = Boolean(config && config.service && config.service.mode === "counter");
   // Only promise UPI/cards/wallets when this café can actually take an online payment.
   const online = gatewayEnabled(config);
 
-  useEffect(() => {
-    let alive = true;
-    setLoadingTables(true);
-    api("/api/tables")
-      .then((data) => {
-        if (alive) setTables(data.tables || []);
-      })
-      .catch(() => {
-        if (alive) setTables([]);
-      })
-      .finally(() => {
-        if (alive) setLoadingTables(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [tablesAttempt]);
+  // A guest who already scanned a table in this tab (and came back here through a footer link) keeps
+  // it: the menu remembers the table for the session under this key.
+  const rememberedTable = rememberedTableFor(cafeSlug());
 
   // Until the café's settings arrive we don't know its name, service style or payment options, so we
   // show a neutral placeholder instead of guessing ("Café", "Dine-in") and then flipping.
@@ -54,10 +38,7 @@ export default function Landing() {
             <button
               type="button"
               className="btn primary"
-              onClick={() => {
-                retryConfig();
-                setTablesAttempt((n) => n + 1);
-              }}
+              onClick={retryConfig}
             >
               Try again
             </button>
@@ -77,6 +58,8 @@ export default function Landing() {
     );
   }
 
+  if (counterService) return <Navigate to={cafePath("/menu")} replace />;
+
   return (
     <main className="landing">
       <header className="landing-bar">
@@ -84,65 +67,42 @@ export default function Landing() {
           ☕
         </span>
         <p className="landing-bar-name">{cafe}</p>
-        <span className="landing-bar-mode">{counterService ? "Pickup" : "Dine-in"}</span>
+        <span className="landing-bar-mode">Dine-in</span>
       </header>
 
       <section className="landing-hero">
-        <p className="eyebrow">{counterService ? "Order ahead" : "Order from your table"}</p>
-        <h1>{counterService ? "Skip the queue" : "Order without the wait"}</h1>
+        <p className="eyebrow">Order from your table</p>
+        <h1>Order without the wait</h1>
         <p className="landing-lede">
-          {counterService
-            ? online
-              ? `Browse the live menu at ${cafe}, pay from your phone and collect at the counter when your number is called.`
-              : `Browse the live menu at ${cafe}, order from your phone, then pay and collect at the counter when your number is called.`
-            : `Browse the live menu at ${cafe} and send your order straight to the kitchen — no app, no waiting to catch someone's eye.`}
+          {`Browse the live menu at ${cafe} and send your order straight to the kitchen — no app, no waiting to catch someone's eye.`}
         </p>
       </section>
 
-      {counterService ? (
-        <section className="landing-action">
-          <Link className="btn primary landing-cta" to={cafePath("/menu")}>
-            Start an order
+      <section className="landing-card scan-card" aria-labelledby="scan-title">
+        <span className="scan-icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 16V8a2 2 0 0 1 2-2h8M32 6h8a2 2 0 0 1 2 2v8M42 32v8a2 2 0 0 1-2 2h-8M16 42H8a2 2 0 0 1-2-2v-8" />
+            <rect x="14" y="14" width="8" height="8" rx="1" />
+            <rect x="26" y="14" width="8" height="8" rx="1" />
+            <rect x="14" y="26" width="8" height="8" rx="1" />
+            <path d="M26 26h3v3M34 26v8h-8" />
+          </svg>
+        </span>
+        <h2 id="scan-title">Scan the QR code on your table</h2>
+        <p className="muted">
+          Point your phone camera at the code on your table. The menu opens with your table already set, so
+          your order comes straight to you.
+        </p>
+        {rememberedTable && (
+          <Link className="btn primary landing-cta" to={cafePath(`/t/${encodeURIComponent(rememberedTable)}`)}>
+            Back to your menu · Table {rememberedTable}
             <span aria-hidden="true">→</span>
           </Link>
-          <p className="landing-note">
-            {online ? "UPI, cards and wallets accepted · paying at the counter is fine too" : "Pay at the counter when you collect"}
-          </p>
-        </section>
-      ) : (
-        <section className="landing-card">
-          <h2>Which table are you at?</h2>
-          <p className="muted small">
-            Tap your table to start. Or scan the QR code on the table — it opens the menu for you.
-          </p>
-          {loadingTables ? (
-            <div className="table-grid" aria-busy="true" aria-label="Loading tables">
-              {[0, 1, 2, 3, 4, 5].map((key) => (
-                <span key={key} className="table-chip table-chip-skeleton" aria-hidden="true" />
-              ))}
-            </div>
-          ) : (
-            <div className="table-grid">
-              {tables.map((table) => (
-                <Link key={table.id} className="table-chip" to={cafePath(`/t/${table.id}`)}>
-                  <span>{table.label}</span>
-                  <small>{table.seats} seats</small>
-                </Link>
-              ))}
-            </div>
-          )}
-          {!loadingTables && tables.length === 0 && (
-            <p className="muted small">
-              Table numbers aren&apos;t listed right now. Ask a staff member, or tap the button below.
-            </p>
-          )}
-          {!loadingTables && tables.length === 0 && (
-            <Link className="btn ghost" to={cafePath("/menu")}>
-              Open the menu
-            </Link>
-          )}
-        </section>
-      )}
+        )}
+        <p className="scan-help small">
+          <strong>Can&apos;t scan?</strong> Ask a staff member and they&apos;ll help you order.
+        </p>
+      </section>
 
       <section className="landing-card">
         <h2>How it works</h2>
@@ -152,11 +112,9 @@ export default function Landing() {
               1
             </span>
             <div>
-              <strong>{counterService ? "Scan the code at the counter" : "Scan the QR code"}</strong>
+              <strong>Scan the QR code</strong>
               <p className="muted small">
-                {counterService
-                  ? "One code for the whole café opens the live menu."
-                  : "Every table has its own code, so we always know where you're sitting."}
+                Every table has its own code, so we always know where you&apos;re sitting.
               </p>
             </div>
           </li>
@@ -174,15 +132,11 @@ export default function Landing() {
               3
             </span>
             <div>
-              <strong>{counterService ? "Pay and collect" : "Send it to the kitchen"}</strong>
+              <strong>Send it to the kitchen</strong>
               <p className="muted small">
-                {counterService
-                  ? online
-                    ? "Pay securely by UPI, card or wallet. We'll call your pickup number when it's ready."
-                    : "Pay at the counter. We'll call your pickup number when it's ready."
-                  : online
-                    ? "Pay securely at your table — UPI, card or wallet, no app to install."
-                    : "Your order goes straight to the kitchen — pay at the counter, no app to install."}
+                {online
+                  ? "Pay securely at your table — UPI, card or wallet, no app to install."
+                  : "Your order goes straight to the kitchen — pay at the counter, no app to install."}
               </p>
             </div>
           </li>
@@ -192,4 +146,13 @@ export default function Landing() {
       <SiteFooter />
     </main>
   );
+}
+
+function rememberedTableFor(slug) {
+  try {
+    const value = sessionStorage.getItem(`cafe_table:${slug || "cafe"}`);
+    return value && /^\d{1,4}$/.test(value) ? value : "";
+  } catch {
+    return "";
+  }
 }

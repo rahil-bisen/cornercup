@@ -210,6 +210,14 @@ export const MIGRATIONS = [
   // Set when the operator archives a café: its pages answer "Café not found" and sign-in stops, while
   // its data stays until it is restored or permanently deleted. NULL (every existing café) means active.
   "ALTER TABLE cafes ADD COLUMN archived_at INTEGER",
+  // Veg / non-veg / egg, set by the owner per item: 'veg', 'nonveg', 'egg', or NULL for "not stated".
+  // Nullable with no default, so every existing item stays unmarked until the owner chooses.
+  "ALTER TABLE menu_items ADD COLUMN diet TEXT",
+  // A guest's note for one dish ("less sugar", "no onion"). Empty for every existing line.
+  "ALTER TABLE order_items ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+  // The owner's "orders are usually ready in about N minutes", shown to guests while they wait. 0 is
+  // "not stated", which every existing café starts as.
+  "ALTER TABLE cafes ADD COLUMN typical_wait_min INTEGER NOT NULL DEFAULT 0",
 
   // Stage 17B. A second factor for the local owner password. One row per café; the secret is stored
   // only as AES-256-GCM ciphertext (`secret_enc`), and `confirmed_at` is what makes the factor
@@ -267,39 +275,40 @@ export const POST_MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS idx_auth_events_cafe ON auth_events (cafe_id, created)",
 ];
 
-// [category, name, description, priceCents, emoji, sort] — prices in paise (INR).
+// [category, name, description, priceCents, emoji, sort, diet] — prices in paise (INR); diet is
+// "veg", "nonveg" or "egg" (the green, red or brown mark on the menu).
 export const SEED_MENU = [
-  ["Chai & Coffee", "Masala Chai", "Kadak, house masala, served in a kulhad.", 5000, "🫖", 10],
-  ["Chai & Coffee", "Filter Coffee", "Degree coffee, frothed and poured tall.", 6000, "☕", 20],
-  ["Chai & Coffee", "Espresso", "Single origin, pulled short.", 9000, "☕", 30],
-  ["Chai & Coffee", "Cappuccino", "Double shot with soft milk foam.", 13000, "☕", 40],
-  ["Chai & Coffee", "Café Latte", "Smooth, milky, easy drinking.", 14000, "☕", 50],
-  ["Chai & Coffee", "Hot Chocolate", "Dark cocoa, topped with whipped cream.", 14000, "🍫", 60],
+  ["Chai & Coffee", "Masala Chai", "Kadak, house masala, served in a kulhad.", 5000, "🫖", 10, "veg"],
+  ["Chai & Coffee", "Filter Coffee", "Degree coffee, frothed and poured tall.", 6000, "☕", 20, "veg"],
+  ["Chai & Coffee", "Espresso", "Single origin, pulled short.", 9000, "☕", 30, "veg"],
+  ["Chai & Coffee", "Cappuccino", "Double shot with soft milk foam.", 13000, "☕", 40, "veg"],
+  ["Chai & Coffee", "Café Latte", "Smooth, milky, easy drinking.", 14000, "☕", 50, "veg"],
+  ["Chai & Coffee", "Hot Chocolate", "Dark cocoa, topped with whipped cream.", 14000, "🍫", 60, "veg"],
 
-  ["Cold Drinks", "Cold Coffee", "Blended with ice cream, chocolate on top.", 15000, "🥤", 110],
-  ["Cold Drinks", "Iced Americano", "Long black over ice.", 13000, "🧊", 120],
-  ["Cold Drinks", "Fresh Lime Soda", "Sweet or salted, your call.", 8000, "🍋", 130],
-  ["Cold Drinks", "Blue Lagoon Mocktail", "Lime, soda and a lot of ice.", 14000, "🍹", 140],
-  ["Cold Drinks", "Buttermilk", "Chilled, with curry leaf and ginger.", 6000, "🥛", 150],
-  ["Cold Drinks", "Mineral Water", "One litre, chilled.", 2000, "💧", 160],
+  ["Cold Drinks", "Cold Coffee", "Blended with ice cream, chocolate on top.", 15000, "🥤", 110, "veg"],
+  ["Cold Drinks", "Iced Americano", "Long black over ice.", 13000, "🧊", 120, "veg"],
+  ["Cold Drinks", "Fresh Lime Soda", "Sweet or salted, your call.", 8000, "🍋", 130, "veg"],
+  ["Cold Drinks", "Blue Lagoon Mocktail", "Lime, soda and a lot of ice.", 14000, "🍹", 140, "veg"],
+  ["Cold Drinks", "Buttermilk", "Chilled, with curry leaf and ginger.", 6000, "🥛", 150, "veg"],
+  ["Cold Drinks", "Mineral Water", "One litre, chilled.", 2000, "💧", 160, "veg"],
 
-  ["Snacks", "Veg Grilled Sandwich", "Mint chutney, cheese, pressed on the grill.", 12000, "🥪", 210],
-  ["Snacks", "Paneer Tikka Sandwich", "Tandoori paneer, onion, capsicum.", 16000, "🥪", 220],
-  ["Snacks", "Peri Peri Fries", "Crisp fries tossed in peri peri.", 13000, "🍟", 230],
-  ["Snacks", "Veg Momos (6)", "Steamed, with fiery red chutney.", 9000, "🥟", 240],
-  ["Snacks", "Chicken Momos (6)", "Steamed, minced filling, red chutney.", 12000, "🥟", 250],
-  ["Snacks", "Cheese Garlic Bread", "Molten cheese on toasted bread.", 14000, "🧄", 260],
+  ["Snacks", "Veg Grilled Sandwich", "Mint chutney, cheese, pressed on the grill.", 12000, "🥪", 210, "veg"],
+  ["Snacks", "Paneer Tikka Sandwich", "Tandoori paneer, onion, capsicum.", 16000, "🥪", 220, "veg"],
+  ["Snacks", "Peri Peri Fries", "Crisp fries tossed in peri peri.", 13000, "🍟", 230, "veg"],
+  ["Snacks", "Veg Momos (6)", "Steamed, with fiery red chutney.", 9000, "🥟", 240, "veg"],
+  ["Snacks", "Chicken Momos (6)", "Steamed, minced filling, red chutney.", 12000, "🥟", 250, "nonveg"],
+  ["Snacks", "Cheese Garlic Bread", "Molten cheese on toasted bread.", 14000, "🧄", 260, "veg"],
 
-  ["Mains", "Veg Biryani", "Dum-cooked, with raita and mirchi ka salan.", 22000, "🍚", 310],
-  ["Mains", "Chicken Biryani", "Long grain rice, tender thigh, raita.", 28000, "🍗", 320],
-  ["Mains", "Paneer Butter Masala", "Served with two butter rotis.", 24000, "🍛", 330],
-  ["Mains", "White Sauce Pasta", "Creamy béchamel, herbs, parmesan.", 23000, "🍝", 340],
-  ["Mains", "Arrabbiata Pasta", "Spicy tomato, garlic, chilli flakes.", 22000, "🍝", 350],
-  ["Mains", "Masala Maggi", "Onion, tomato and a lot of butter.", 7000, "🍜", 360],
+  ["Mains", "Veg Biryani", "Dum-cooked, with raita and mirchi ka salan.", 22000, "🍚", 310, "veg"],
+  ["Mains", "Chicken Biryani", "Long grain rice, tender thigh, raita.", 28000, "🍗", 320, "nonveg"],
+  ["Mains", "Paneer Butter Masala", "Served with two butter rotis.", 24000, "🍛", 330, "veg"],
+  ["Mains", "White Sauce Pasta", "Creamy béchamel, herbs, parmesan.", 23000, "🍝", 340, "veg"],
+  ["Mains", "Arrabbiata Pasta", "Spicy tomato, garlic, chilli flakes.", 22000, "🍝", 350, "veg"],
+  ["Mains", "Masala Maggi", "Onion, tomato and a lot of butter.", 7000, "🍜", 360, "veg"],
 
-  ["Desserts", "Chocolate Brownie", "Warm, fudgy, dark chocolate.", 12000, "🍫", 410],
-  ["Desserts", "Choco Lava Cake", "Molten centre, vanilla on the side.", 14000, "🍫", 420],
-  ["Desserts", "Brownie with Ice Cream", "The full works.", 18000, "🍨", 430],
+  ["Desserts", "Chocolate Brownie", "Warm, fudgy, dark chocolate.", 12000, "🍫", 410, "egg"],
+  ["Desserts", "Choco Lava Cake", "Molten centre, vanilla on the side.", 14000, "🍫", 420, "egg"],
+  ["Desserts", "Brownie with Ice Cream", "The full works.", 18000, "🍨", 430, "egg"],
 ];
 
 let ready = false;
@@ -479,10 +488,10 @@ export async function seedMenu(env, cafeId) {
   if (menu && menu.count > 0) return;
 
   await env.DB.batch(
-    SEED_MENU.map(([category, name, description, priceCents, emoji, sort]) =>
+    SEED_MENU.map(([category, name, description, priceCents, emoji, sort, diet]) =>
       env.DB.prepare(
-        "INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, sort) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(cafeId, category, name, description, priceCents, emoji, sort)
+        "INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, sort, diet) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(cafeId, category, name, description, priceCents, emoji, sort, diet || null)
     )
   );
 }

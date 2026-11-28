@@ -105,9 +105,13 @@ async function mount(order) {
 
   return {
     heading: () => container.querySelector("h1")?.textContent || "",
-    queue: () => container.querySelector(".queue-number")?.textContent || "",
-    eyebrow: () => container.querySelector(".receipt-head .eyebrow")?.textContent || "",
+    queue: () => container.querySelector(".order-ticket-number")?.textContent || "",
+    eyebrow: () => container.querySelector(".order-ticket .eyebrow")?.textContent || "",
     steps: () => [...container.querySelectorAll(".timeline-step")].map((el) => el.className),
+    stepTitles: () => [...container.querySelectorAll(".timeline-step strong")].map((el) => el.textContent),
+    current: () => container.querySelector('.timeline-step[aria-current="step"] strong')?.textContent || "",
+    wait: () => container.querySelector(".wait-estimate")?.textContent || "",
+    text: () => container.textContent.replace(/\s+/g, " "),
     unmount: async () => {
       await act(async () => {
         reactRoot.unmount();
@@ -117,12 +121,15 @@ async function mount(order) {
   };
 }
 
-test("a new order says it was confirmed, and a table order shows its table instead of a queue number", async () => {
+test("a new order thanks the guest, and a table order's big number is its order code", async () => {
   const page = await mount(TABLE_ORDER);
   try {
-    assert.equal(page.heading(), "Order confirmed");
-    assert.equal(page.eyebrow(), "Table");
-    assert.equal(page.queue(), "Table 1");
+    assert.equal(page.heading(), "Thanks — your order is in!");
+    assert.equal(page.eyebrow(), "Your order number");
+    assert.equal(page.queue(), "#ABC123", "the code staff can look up, shown large");
+    assert.match(page.text(), /Table 1/);
+    assert.deepEqual(page.stepTitles(), ["Received", "Preparing", "Ready", "Served"]);
+    assert.equal(page.current(), "Received", "the current step is marked for assistive tech");
   } finally {
     await page.unmount();
   }
@@ -130,7 +137,7 @@ test("a new order says it was confirmed, and a table order shows its table inste
 
 test("headings follow every intermediate status of a table order", async () => {
   const cases = [
-    ["preparing", "Being made"],
+    ["preparing", "Being prepared"],
     ["ready", "Your order is ready"],
     ["served", "Served"],
   ];
@@ -148,7 +155,7 @@ test("a pickup order is told to collect, and its queue number is the headline", 
   const ready = await mount({ ...PICKUP_ORDER, status: "ready" });
   try {
     assert.equal(ready.heading(), "Ready to collect");
-    assert.equal(ready.eyebrow(), "Pickup number");
+    assert.equal(ready.eyebrow(), "Your pickup number");
     assert.equal(ready.queue(), "12", "the pickup number, not a table label");
   } finally {
     await ready.unmount();
@@ -167,6 +174,35 @@ test("a cancelled order says so and shows no progress timeline", async () => {
   try {
     assert.equal(page.heading(), "Order cancelled");
     assert.equal(page.steps().length, 0, "no step is claimed for a cancelled order");
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("the usual wait shows only while the order is on its way, and only when the café set one", async () => {
+  const waiting = await mount({ ...TABLE_ORDER, typicalWaitMin: 15 });
+  try {
+    assert.match(waiting.wait(), /Usually ready in about 15 min \(around /);
+  } finally {
+    await waiting.unmount();
+  }
+  for (const order of [{ ...TABLE_ORDER, typicalWaitMin: 0 }, TABLE_ORDER, { ...TABLE_ORDER, typicalWaitMin: 15, status: "ready" }]) {
+    const page = await mount(order);
+    try {
+      assert.equal(page.wait(), "", `no estimate for ${JSON.stringify({ wait: order.typicalWaitMin, status: order.status })}`);
+    } finally {
+      await page.unmount();
+    }
+  }
+});
+
+test("a dish's note is shown under it on the receipt", async () => {
+  const page = await mount({
+    ...TABLE_ORDER,
+    items: [{ name: "Masala Chai", emoji: "", priceCents: 5000, qty: 2, note: "less sugar" }],
+  });
+  try {
+    assert.match(page.text(), /2× Masala Chai“less sugar”/);
   } finally {
     await page.unmount();
   }

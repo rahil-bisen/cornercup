@@ -50,36 +50,36 @@ export const DEMO_TABLES = [
   { number: 6, seats: 6 },
 ];
 
-// [category, name, description, price in paise, emoji, available]. The five categories match the bundled
-// category photographs in public/defaults, and the item names match the photo map in
-// src/lib/menuImages.js, so items show a real photograph where one truthfully exists and their emoji
-// otherwise. One item is sold out so the demo can show how that looks to a guest.
+// [category, name, description, price in paise, emoji, available, diet]. Diet is "veg", "nonveg" or
+// "egg" and shows as the green, red or brown mark next to the item name. Items show the café's own uploaded
+// photograph when there is one and a placeholder tile otherwise (see src/lib/menuImages.js). One item is
+// sold out so the demo can show how that looks to a guest.
 export const DEMO_MENU = [
-  ["Chai & Coffee", "Masala Chai", "Kadak chai with house masala, served in a kulhad.", 4000, "🫖", true],
-  ["Chai & Coffee", "Filter Coffee", "South Indian degree coffee, frothed and poured tall.", 5000, "☕", true],
+  ["Chai & Coffee", "Masala Chai", "Kadak chai with house masala, served in a kulhad.", 4000, "🫖", true, "veg"],
+  ["Chai & Coffee", "Filter Coffee", "South Indian degree coffee, frothed and poured tall.", 5000, "☕", true, "veg"],
   // The only bundled hot-drink photograph is chai in a kulhad, so the hot drinks are chais: a cappuccino
   // or hot chocolate would have shown a picture of something else.
-  ["Chai & Coffee", "Adrak Chai", "Fresh ginger, brewed strong.", 4500, "🫖", true],
-  ["Chai & Coffee", "Elaichi Chai", "Cardamom chai, lightly sweet.", 4500, "🫖", true],
+  ["Chai & Coffee", "Adrak Chai", "Fresh ginger, brewed strong.", 4500, "🫖", true, "veg"],
+  ["Chai & Coffee", "Elaichi Chai", "Cardamom chai, lightly sweet.", 4500, "🫖", true, "veg"],
 
-  ["Cold Drinks", "Cold Coffee", "Blended with vanilla ice cream, chocolate on top.", 14000, "🥤", true],
-  ["Cold Drinks", "Iced Americano", "Long black over ice.", 12000, "🧊", true],
-  ["Cold Drinks", "Fresh Lime Soda", "Sweet or salted, your call.", 7000, "🍋", true],
-  ["Cold Drinks", "Buttermilk", "Chilled chaas with curry leaf and ginger.", 5000, "🥛", true],
+  ["Cold Drinks", "Cold Coffee", "Blended with vanilla ice cream, chocolate on top.", 14000, "🥤", true, "veg"],
+  ["Cold Drinks", "Iced Americano", "Long black over ice.", 12000, "🧊", true, "veg"],
+  ["Cold Drinks", "Fresh Lime Soda", "Sweet or salted, your call.", 7000, "🍋", true, "veg"],
+  ["Cold Drinks", "Buttermilk", "Chilled chaas with curry leaf and ginger.", 5000, "🥛", true, "veg"],
 
-  ["Snacks", "Veg Grilled Sandwich", "Mint chutney, cheese and vegetables, pressed on the grill.", 11000, "🥪", true],
-  ["Snacks", "Paneer Tikka Sandwich", "Tandoori paneer, onion and capsicum.", 15000, "🥪", true],
-  ["Snacks", "Cheese Garlic Bread", "Molten cheese on toasted garlic bread.", 13000, "🧄", true],
-  ["Snacks", "Veg Momos (6)", "Steamed, with fiery red chutney.", 9000, "🥟", true],
+  ["Snacks", "Veg Grilled Sandwich", "Mint chutney, cheese and vegetables, pressed on the grill.", 11000, "🥪", true, "veg"],
+  ["Snacks", "Paneer Tikka Sandwich", "Tandoori paneer, onion and capsicum.", 15000, "🥪", true, "veg"],
+  ["Snacks", "Cheese Garlic Bread", "Molten cheese on toasted garlic bread.", 13000, "🧄", true, "veg"],
+  ["Snacks", "Veg Momos (6)", "Steamed, with fiery red chutney.", 9000, "🥟", true, "veg"],
 
-  ["Mains", "Veg Biryani", "Dum-cooked, with raita and mirchi ka salan.", 21000, "🍚", true],
-  ["Mains", "Chicken Biryani", "Long-grain rice, tender chicken, raita.", 27000, "🍗", false],
-  ["Mains", "Paneer Butter Masala", "With two butter rotis.", 23000, "🍛", true],
-  ["Mains", "Masala Maggi", "Onion, tomato and plenty of butter.", 7000, "🍜", true],
+  ["Mains", "Veg Biryani", "Dum-cooked, with raita and mirchi ka salan.", 21000, "🍚", true, "veg"],
+  ["Mains", "Chicken Biryani", "Long-grain rice, tender chicken, raita.", 27000, "🍗", false, "nonveg"],
+  ["Mains", "Paneer Butter Masala", "With two butter rotis.", 23000, "🍛", true, "veg"],
+  ["Mains", "Masala Maggi", "Onion, tomato and plenty of butter.", 7000, "🍜", true, "veg"],
 
-  ["Desserts", "Chocolate Brownie", "Warm, fudgy, dark chocolate.", 11000, "🍫", true],
-  ["Desserts", "Choco Lava Cake", "Molten centre, vanilla ice cream on the side.", 13000, "🍫", true],
-  ["Desserts", "Brownie with Ice Cream", "The full works.", 17000, "🍨", true],
+  ["Desserts", "Chocolate Brownie", "Warm, fudgy, dark chocolate.", 11000, "🍫", true, "egg"],
+  ["Desserts", "Choco Lava Cake", "Molten centre, vanilla ice cream on the side.", 13000, "🍫", true, "egg"],
+  ["Desserts", "Brownie with Ice Cream", "The full works.", 17000, "🍨", true, "egg"],
 ];
 
 // SQLite string literal. Every value here is a constant from this file, but quoting stays correct anyway.
@@ -125,10 +125,10 @@ export function buildDemoStatements() {
     );
   }
 
-  DEMO_MENU.forEach(([category, name, description, price, emoji, available], index) => {
+  DEMO_MENU.forEach(([category, name, description, price, emoji, available, diet], index) => {
     statements.push(
-      `INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, available, sort) ` +
-        `SELECT id, ${q(category)}, ${q(name)}, ${q(description)}, ${Number(price)}, ${q(emoji)}, ${available ? 1 : 0}, ${(index + 1) * 10} ` +
+      `INSERT INTO menu_items (cafe_id, category, name, description, price_cents, emoji, available, sort, diet) ` +
+        `SELECT id, ${q(category)}, ${q(name)}, ${q(description)}, ${Number(price)}, ${q(emoji)}, ${available ? 1 : 0}, ${(index + 1) * 10}, ${q(diet)} ` +
         `FROM cafes WHERE slug = ${slug}`
     );
   });

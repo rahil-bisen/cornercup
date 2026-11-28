@@ -97,7 +97,6 @@ export default function Operator() {
               autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="••••"
               autoFocus
             />
           </label>
@@ -295,7 +294,7 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
           </span>
           <div>
             <strong>Operator console</strong>
-            <p className="muted small">{cafes ? `${cafes.length} cafés on this deployment` : "Loading…"}</p>
+            <p className="muted small">{cafes ? `${cafes.length} ${cafes.length === 1 ? "café" : "cafés"} on this deployment` : "Loading…"}</p>
           </div>
         </div>
         <div className="admin-top-actions">
@@ -322,7 +321,7 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
           {notice && <p className="muted small">{notice}</p>}
           {!cafes && <p className="muted">Loading cafés…</p>}
 
-          <div className="table-grid">
+          <div className="table-grid cafe-grid">
             {(cafes || []).map((cafe) => (
               <div key={cafe.slug} className="table-chip">
                 <Link className="table-chip-link" to={`/c/${cafe.slug}/owner`}>
@@ -422,7 +421,7 @@ function OperatorShell({ onSignOut, onSignOutEverywhere, csrfToken, onCsrfToken 
             <section aria-label="Archived cafés" className="archived-cafes">
               <h2>Archived cafés</h2>
               <p className="muted small">Hidden from guests and owners. Their data is kept until you delete it.</p>
-              <div className="table-grid">
+              <div className="table-grid cafe-grid">
                 {archived.map((cafe) => (
                   <div key={cafe.slug} className="table-chip">
                     <span className="table-chip-link">

@@ -75,7 +75,7 @@ test("F-18: /api/config exposes café-facing settings and no credentials", { ski
     assert.equal(body.slug, cafe.slug);
     assert.equal(body.currency, "INR");
     assert.deepEqual(Object.keys(body.cafe).sort(), ["address", "email", "name", "phone"]);
-    assert.deepEqual(Object.keys(body.service), ["mode"]);
+    assert.deepEqual(Object.keys(body.service), ["mode", "typicalWaitMin"]);
     // The harness configures ADMIN_SECRET, so orders can be tracked. Only a boolean is exposed,
     // never which secret backs it.
     assert.deepEqual(body.ordering, { available: true });
@@ -107,7 +107,7 @@ test("F-18: the public menu carries only what a guest orders from", { skip }, as
       for (const item of category.items) {
         assert.deepEqual(
           Object.keys(item).sort(),
-          ["available", "description", "emoji", "hasCustomImage", "id", "imageUrl", "name", "priceCents"],
+          ["available", "description", "diet", "emoji", "hasCustomImage", "id", "imageUrl", "name", "priceCents"],
           `item shape in ${category.name}`
         );
       }

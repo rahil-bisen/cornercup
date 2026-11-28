@@ -87,3 +87,21 @@ export function isCafeNotFound(error) {
 export function cafeName(config) {
   return (config && config.cafe && config.cafe.name) || "Café";
 }
+
+// Every customer page names the café in the browser tab, so a guest with several tabs open (or a phone
+// showing recent apps) can tell which one is the menu. `page` is the screen ("Menu", "Your order"); the
+// landing page passes nothing and shows the café name alone. Until the café's config arrives the tab
+// keeps whatever it had, and a café that does not exist says so.
+export function cafeTitle(config, page, notFound = false) {
+  if (notFound) return "Café not found";
+  const name = config && config.cafe && config.cafe.name;
+  if (!name) return null;
+  return page ? `${page} · ${name}` : name;
+}
+
+export function useCafeTitle(config, page, notFound = false) {
+  const title = cafeTitle(config, page, notFound);
+  useEffect(() => {
+    if (title) document.title = title;
+  }, [title]);
+}

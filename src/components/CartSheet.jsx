@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { money } from "../lib/money.js";
 
 // The sheet is mounted only while it is open, so its focus work belongs in a component that exists for
@@ -13,6 +13,9 @@ function OpenCartSheet({
   lines,
   note,
   onNote,
+  // Per-dish notes, keyed by item id, and their setter.
+  itemNotes = {},
+  onItemNote = () => {},
   onQty,
   onClose,
   onPlace,
@@ -28,6 +31,9 @@ function OpenCartSheet({
   orderingClosedMessage = "",
 }) {
   const sheetRef = useRef(null);
+  // Which line's note field is open. A line that already has a note shows its field from the start.
+  const [editingNote, setEditingNote] = useState(null);
+  const itemCount = lines.reduce((sum, line) => sum + line.qty, 0);
   const closeRef = useRef(null);
   const restoreRef = useRef(null);
   // The callbacks are read through refs so the effect below runs once per open, not once per render:
@@ -121,17 +127,44 @@ function OpenCartSheet({
         </header>
 
         <div className="sheet-body">
+          <p className="sheet-summary">
+            {itemCount} {itemCount === 1 ? "item" : "items"} · check your order before sending it
+          </p>
           <ul className="sheet-lines">
-            {lines.map((line) => (
-              <li key={line.item.id} className="sheet-line">
-                <span className="sheet-emoji" aria-hidden="true">
-                  {line.item.emoji}
-                </span>
+            {lines.map((line) => {
+              const id = line.item.id;
+              const itemNote = itemNotes[id] || "";
+              const noteOpen = editingNote === id || Boolean(itemNote);
+              const noteField = `item-note-${id}`;
+              return (
+              <li key={id} className="sheet-line">
                 <div className="sheet-line-text">
                   <p className="sheet-line-name">{line.item.name}</p>
                   {/* The unit price only earns its line when there is more than one; at a quantity of
                       one it would repeat the line total word for word. */}
                   {line.qty > 1 && <p className="muted small">{money(line.item.priceCents)} each</p>}
+                  {noteOpen ? (
+                    <label className="sheet-item-note" htmlFor={noteField}>
+                      <span className="sr-only">Note for {line.item.name}</span>
+                      <input
+                        id={noteField}
+                        type="text"
+                        maxLength={120}
+                        autoComplete="off"
+                        placeholder="e.g. less sugar, no onion"
+                        value={itemNote}
+                        autoFocus={editingNote === id && !itemNote}
+                        onChange={(event) => onItemNote(id, event.target.value)}
+                        onBlur={() => {
+                          if (!itemNote.trim()) setEditingNote(null);
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <button type="button" className="link-btn sheet-add-note" onClick={() => setEditingNote(id)}>
+                      + Add a note
+                    </button>
+                  )}
                 </div>
                 <div className="stepper">
                   <button
@@ -152,15 +185,16 @@ function OpenCartSheet({
                 </div>
                 <span className="sheet-line-price">{money(line.item.priceCents * line.qty)}</span>
               </li>
-            ))}
+              );
+            })}
           </ul>
 
           <label className="field">
-            <span>Anything the kitchen should know?</span>
+            <span>Anything else the kitchen should know? (optional)</span>
             <textarea
               rows={2}
               maxLength={300}
-              placeholder="No onions, extra hot, allergy notes…"
+              placeholder="Allergies, or anything for the whole order"
               value={note}
               onChange={(event) => onNote(event.target.value)}
             />
