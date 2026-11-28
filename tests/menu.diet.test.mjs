@@ -46,7 +46,8 @@ try {
 const send = (method, path, body, headers = {}) =>
   fetch(`${AUTH}${path}`, {
     method,
-    headers: { "content-type": "application/json", origin: AUTH, ...headers },
+    // Its own client address, so these writes never count against the bucket the rest of the suite shares.
+    headers: { "content-type": "application/json", origin: AUTH, "cf-connecting-ip": "203.0.113.13", ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 

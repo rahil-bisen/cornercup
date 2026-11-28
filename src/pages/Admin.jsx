@@ -6,6 +6,7 @@ import { cafeName, isCafeNotFound, refreshSiteConfig, useSiteConfigState } from 
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { clockTime, money, timeAgo } from "../lib/money.js";
 import { gatewayEnabled } from "../lib/payments.js";
+import { hasDailyNumber, orderLabel, orderMatchesTerm } from "../lib/orderNumber.js";
 import DietMark from "../components/DietMark.jsx";
 import { placeholderInitial } from "../lib/menuImages.js";
 
@@ -612,9 +613,8 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
     const term = query.trim().toLowerCase();
     if (!term) return true;
     return (
-      String(order.id).toLowerCase().includes(term) ||
+      orderMatchesTerm(order, term) ||
       String(order.tableLabel || "").toLowerCase().includes(term) ||
-      (order.queueNo != null && String(order.queueNo).includes(term)) ||
       (order.items || []).some((item) => String(item.name).toLowerCase().includes(term))
     );
   };
@@ -750,10 +750,12 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
                   <article key={order.id} className={`order-card${arrived.includes(order.id) ? " is-new" : ""}`}>
                     <div className="order-card-head">
                       <div>
+                        {/* The daily number is what the guest shows or hears; the table (or "Counter")
+                            says where it goes. Old orders without a number keep their code. */}
                         <p className="order-table">
-                          {order.queueNo != null ? `#${order.queueNo}` : order.tableLabel}
+                          {hasDailyNumber(order) ? `Order ${orderLabel(order)}` : order.tableLabel}
                         </p>
-                        <p className="order-id">#{order.id}</p>
+                        <p className="order-id">{hasDailyNumber(order) ? order.tableLabel : `#${order.id}`}</p>
                         {(order.paymentTxn || order.paymentRef) && (
                           <p className="order-id">{order.paymentTxn || order.paymentRef}</p>
                         )}
@@ -836,10 +838,10 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
             {done.map((order) => (
               <li key={order.id} className={order.status}>
                 <span className="done-table">
-                  {order.queueNo != null ? `#${order.queueNo}` : order.tableLabel}
+                  {hasDailyNumber(order) ? orderLabel(order) : order.tableLabel}
                 </span>
                 <span className="muted small">
-                  #{order.id} · {order.items.reduce((sum, item) => sum + item.qty, 0)} items ·{" "}
+                  {hasDailyNumber(order) ? order.tableLabel : `#${order.id}`} · {order.items.reduce((sum, item) => sum + item.qty, 0)} items ·{" "}
                   {money(order.totalCents)}
                 </span>
                 <span className={`badge ${order.status}`}>{order.status}</span>

@@ -121,7 +121,7 @@ test("counter orders receive sequential pickup numbers and no table", { skip }, 
   }
 });
 
-test("pickup numbering is per café and absent for dine-in", { skip }, async () => {
+test("daily numbering is per café and covers dine-in too", { skip }, async () => {
   const cafeA = await seed();
   const cafeB = await seed();
   const dineIn = await seed(H, { serviceMode: "tables" });
@@ -136,7 +136,7 @@ test("pickup numbering is per café and absent for dine-in", { skip }, async () 
     const tableOrder = await checkout(H, dineIn, crypto.randomUUID(), cart(dineIn, 1, { tableId: 1 }));
     assert.equal(tableOrder.status, 201);
     const { order } = await tableOrder.json();
-    assert.equal(order.queueNo, null, "dine-in tickets never take a pickup number");
+    assert.equal(order.queueNo, 1, "a dine-in café starts its own daily run at 1");
     assert.equal(order.tableId, 1, "the café-facing table number");
     assert.equal(order.tableLabel, "Harness Table");
   } finally {

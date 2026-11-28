@@ -107,58 +107,64 @@ export function releaseStatement(env, { cafeId, key, lease }) {
   ).bind(cafeId, key, lease);
 }
 
+/* ------------------------------------------------------------- daily numbers */
+
+// The café's own calendar day for a moment in time: its date ("2026-11-28") and the UTC instants
+// where that day starts and ends. A café's order numbers restart at 1 when this date changes, which is
+// local midnight for that café, not UTC midnight.
+export function cafeDay(nowMs, tzOffsetMinutes) {
+  const offset = Number.isFinite(Number(tzOffsetMinutes)) ? Number(tzOffsetMinutes) : 330;
+  const local = nowMs + offset * 60_000;
+  const midnight = Math.floor(local / 86_400_000) * 86_400_000;
+  return {
+    businessDate: new Date(midnight).toISOString().slice(0, 10),
+    dayStart: new Date(midnight - offset * 60_000).toISOString(),
+    dayEnd: new Date(midnight + 86_400_000 - offset * 60_000).toISOString(),
+  };
+}
+
+// The next daily number, computed inside the INSERT itself, so no other statement can run between
+// reading the highest number and writing the next one. It counts this café's orders for this business
+// date, plus (on the day this feature ships) the café's orders from earlier the same day that were
+// numbered before business_date existed, so today's numbering carries on instead of restarting at 1.
+// The partial unique index idx_orders_daily_number backs this up: a duplicate can never be stored.
+const DAILY_NUMBER =
+  "(SELECT COALESCE(MAX(queue_no), 0) + 1 FROM orders WHERE cafe_id = ? AND queue_no IS NOT NULL " +
+  "AND (business_date = ? OR (business_date IS NULL AND created_at >= ? AND created_at < ?)))";
+
 // S5 — the arbitration. The order exists only while this request still owns the claim under its own
 // lease, so an abandonment that committed first suppresses the insert entirely (changes === 0,
-// nothing thrown) and the counter subquery is never evaluated.
+// nothing thrown) and the number subquery is never evaluated. Every order, dine-in or counter, gets
+// the café's next daily number.
 export function orderInsertStatement(env, p) {
+  const day = p.businessDate
+    ? { businessDate: p.businessDate, dayStart: p.dayStart, dayEnd: p.dayEnd }
+    : cafeDay(Number.isFinite(Date.parse(p.now)) ? Date.parse(p.now) : Date.now(), p.tzOffsetMin);
   const guard =
     " WHERE EXISTS (SELECT 1 FROM checkout_claims WHERE cafe_id = ? AND idempotency_key = ? " +
     "AND state = 'claimed' AND lease = ? AND fingerprint = ?)";
 
-  if (p.counter) {
-    return env.DB.prepare(
-      "INSERT INTO orders (id, cafe_id, table_id, table_label, note, status, total_cents, " +
-        "payment_method, payment_status, queue_no, idempotency_key, fingerprint, track_nonce, " +
-        "track_hash, created_at, updated_at) " +
-        "SELECT ?, ?, 0, 'Counter', ?, 'new', ?, ?, 'unpaid', " +
-        "(SELECT COALESCE(MAX(queue_no), 0) + 1 FROM orders " +
-        "WHERE cafe_id = ? AND queue_no IS NOT NULL AND created_at >= ?), ?, ?, ?, ?, ?, ?" +
-        guard
-    ).bind(
-      p.id,
-      p.cafeId,
-      p.note,
-      p.totalCents,
-      p.paymentMethod,
-      p.cafeId,
-      p.dayStart,
-      p.key,
-      p.fingerprint,
-      p.trackNonce == null ? null : p.trackNonce,
-      p.trackHash == null ? null : p.trackHash,
-      p.now,
-      p.now,
-      p.cafeId,
-      p.key,
-      p.lease,
-      p.fingerprint
-    );
-  }
-
   return env.DB.prepare(
     "INSERT INTO orders (id, cafe_id, table_id, table_label, note, status, total_cents, " +
-      "payment_method, payment_status, queue_no, idempotency_key, fingerprint, track_nonce, " +
+      "payment_method, payment_status, queue_no, business_date, idempotency_key, fingerprint, track_nonce, " +
       "track_hash, created_at, updated_at) " +
-      "SELECT ?, ?, ?, ?, ?, 'new', ?, ?, 'unpaid', NULL, ?, ?, ?, ?, ?, ?" +
+      "SELECT ?, ?, ?, ?, ?, 'new', ?, ?, 'unpaid', " +
+      DAILY_NUMBER +
+      ", ?, ?, ?, ?, ?, ?, ?" +
       guard
   ).bind(
     p.id,
     p.cafeId,
-    p.tableId,
-    p.tableLabel,
+    p.counter ? 0 : p.tableId,
+    p.counter ? "Counter" : p.tableLabel,
     p.note,
     p.totalCents,
     p.paymentMethod,
+    p.cafeId,
+    day.businessDate,
+    day.dayStart,
+    day.dayEnd,
+    day.businessDate,
     p.key,
     p.fingerprint,
     p.trackNonce == null ? null : p.trackNonce,
@@ -170,6 +176,14 @@ export function orderInsertStatement(env, p) {
     p.lease,
     p.fingerprint
   );
+}
+
+// True when a write failed only because another order took the same daily number at the same moment.
+// The insert computes the number itself, so this should never happen; if it ever does, the unique
+// index has refused the duplicate and the caller may simply try again, which reads the new maximum.
+export function isDailyNumberCollision(err) {
+  const message = String((err && err.message) || err || "");
+  return /UNIQUE constraint failed:\s*orders\.cafe_id,\s*orders\.business_date,\s*orders\.queue_no/i.test(message);
 }
 
 // S6 — attach an item only to the order this batch just wrote. The guard repeats café, key and
