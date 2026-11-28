@@ -5,7 +5,7 @@ import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../l
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { isCurrentScope, menuScope } from "../lib/menuScope.js";
 import { placeholderInitial, resolveItemImage } from "../lib/menuImages.js";
-import { filterMenu, vegFilterUseful } from "../lib/menuFilter.js";
+import { filterMenu, searchUseful, vegFilterUseful } from "../lib/menuFilter.js";
 import DietMark from "../components/DietMark.jsx";
 import { money } from "../lib/money.js";
 import { checkoutPaymentMethod, gatewayEnabled } from "../lib/payments.js";
@@ -114,10 +114,20 @@ export default function Menu() {
   // "Veg only" is offered only when the menu marks diets and has something that is not veg.
   const [vegOnly, setVegOnly] = useState(false);
   const showVegFilter = Boolean(data && vegFilterUseful(data.categories));
+  // Search appears once the menu is long enough to need it (more than 15 items).
+  const [query, setQuery] = useState("");
+  const showSearch = Boolean(data && searchUseful(data.categories));
+  const activeQuery = showSearch ? query : "";
   const visibleCategories = useMemo(
-    () => (data ? filterMenu(data.categories, { vegOnly: showVegFilter && vegOnly }) : []),
-    [data, vegOnly, showVegFilter]
+    () => (data ? filterMenu(data.categories, { vegOnly: showVegFilter && vegOnly, query: activeQuery }) : []),
+    [data, vegOnly, showVegFilter, activeQuery]
   );
+  const visibleCount = visibleCategories.reduce((count, category) => count + category.items.length, 0);
+  const filtering = Boolean(activeQuery.trim()) || (showVegFilter && vegOnly);
+  const clearFilters = () => {
+    setQuery("");
+    setVegOnly(false);
+  };
 
   // A table in the URL is the guest's explicit choice, so it beats anything remembered, and it is
   // remembered for this café only. A counter café has no tables, so it stores nothing.
@@ -519,21 +529,53 @@ export default function Menu() {
             <span className="category-nav-fade" aria-hidden="true" />
           </div>
 
-          {showVegFilter && (
+          {(showSearch || showVegFilter) && (
             <div className="menu-tools">
-              <label className={`veg-toggle${vegOnly ? " on" : ""}`}>
-                <input type="checkbox" checked={vegOnly} onChange={(event) => setVegOnly(event.target.checked)} />
-                <DietMark diet="veg" />
-                <span>Veg only</span>
-              </label>
+              {showSearch && (
+                <div className="menu-search">
+                  <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false">
+                    <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                    <path d="M13 13l4.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <input
+                    type="search"
+                    inputMode="search"
+                    enterKeyHint="search"
+                    autoComplete="off"
+                    aria-label="Search the menu"
+                    placeholder="Search the menu"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                  {query && (
+                    <button type="button" className="menu-search-clear" aria-label="Clear search" onClick={() => setQuery("")}>
+                      ×
+                    </button>
+                  )}
+                </div>
+              )}
+              {showVegFilter && (
+                <label className={`veg-toggle${vegOnly ? " on" : ""}`}>
+                  <input type="checkbox" checked={vegOnly} onChange={(event) => setVegOnly(event.target.checked)} />
+                  <DietMark diet="veg" />
+                  <span>Veg only</span>
+                </label>
+              )}
             </div>
           )}
 
+          {/* Announced, so a screen-reader user hears how many dishes are left after typing. */}
+          <p className="sr-only" role="status" aria-live="polite">
+            {filtering ? `${visibleCount} ${visibleCount === 1 ? "item" : "items"} shown` : ""}
+          </p>
+
           {visibleCategories.length === 0 && (
-            <div className="state-card" role="status">
+            <div className="state-card">
               <h2>Nothing matches</h2>
-              <p className="muted">No items on this menu match your filters.</p>
-              <button type="button" className="btn ghost" onClick={() => setVegOnly(false)}>
+              <p className="muted">
+                {activeQuery.trim() ? `No items match “${activeQuery.trim()}”.` : "No items on this menu match your filters."}
+              </p>
+              <button type="button" className="btn ghost" onClick={clearFilters}>
                 Show the full menu
               </button>
             </div>

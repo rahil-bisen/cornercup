@@ -1,8 +1,8 @@
-// Veg / non-veg / egg: the "Veg only" filter as a pure function, and the owner's diet field over the
+// Veg / non-veg / egg and menu search: the filters as pure functions, and the owner's diet field over the
 // real Worker routes in the auth harness (create, edit, clear, refuse a bad value, guest menu shows it).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterMenu, vegFilterUseful } from "../src/lib/menuFilter.js";
+import { SEARCH_MIN_ITEMS, filterMenu, searchUseful, vegFilterUseful } from "../src/lib/menuFilter.js";
 import { SEED_MENU } from "../worker/db.js";
 import { DEMO_MENU } from "../scripts/demo-cafe.mjs";
 import { HARNESS_OWNER_PASSWORD } from "./harness/credentials.mjs";
@@ -92,4 +92,30 @@ test("the owner sets, changes and clears an item's diet; the guest menu shows it
   } finally {
     await send("POST", "/clean", { slug: cafe.slug });
   }
+});
+
+/* ------------------------------------------------------------------ search */
+
+
+const longMenu = [
+  { name: "Chai & Coffee", items: [{ name: "Café Latte", description: "Smooth and milky", diet: "veg" }, { name: "Masala Chai", description: "Kadak", diet: "veg" }] },
+  { name: "Mains", items: [{ name: "Chicken Biryani", description: "Long grain rice", diet: "nonveg" }, { name: "Veg Biryani", description: "Dum-cooked", diet: "veg" }] },
+];
+
+test("search matches every typed word in name, description or category, ignoring case and accents", () => {
+  const names = (query, options = {}) => filterMenu(longMenu, { query, ...options }).flatMap((c) => c.items.map((i) => i.name));
+  assert.deepEqual(names("cafe latte"), ["Café Latte"]);
+  assert.deepEqual(names("  BIRYANI "), ["Chicken Biryani", "Veg Biryani"]);
+  assert.deepEqual(names("rice chicken"), ["Chicken Biryani"], "words in any order, across name and description");
+  assert.deepEqual(names("coffee"), ["Café Latte", "Masala Chai"], "the category name counts");
+  assert.deepEqual(names("biryani", { vegOnly: true }), ["Veg Biryani"], "search and Veg only combine");
+  assert.deepEqual(names("pizza"), []);
+  assert.deepEqual(names(""), ["Café Latte", "Masala Chai", "Chicken Biryani", "Veg Biryani"]);
+});
+
+test("search is offered only on menus with more than 15 items", () => {
+  const menuOf = (n) => [{ name: "A", items: Array.from({ length: n }, (_, i) => ({ name: `Item ${i}` })) }];
+  assert.equal(SEARCH_MIN_ITEMS, 16);
+  assert.equal(searchUseful(menuOf(15)), false);
+  assert.equal(searchUseful(menuOf(16)), true);
 });
