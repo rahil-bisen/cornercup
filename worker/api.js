@@ -1162,6 +1162,8 @@ async function orderPayload(env, cafe, orderId) {
 
   return {
     id: order.id,
+    // The café's public name, so the tracking page can title its tab without a second request.
+    cafeName: cafe.name,
     tableId: order.table_number == null ? null : order.table_number,
     tableLabel: order.table_label,
     queueNo: order.queue_no == null ? null : order.queue_no,

@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { api, cafePath } from "../lib/api.js";
 import { clockTime, money } from "../lib/money.js";
 import PaymentPanel from "../components/PaymentPanel.jsx";
+import { useCafeTitle } from "../lib/config.js";
 
 // A guest watching their ticket polls less often than staff need to: fifteen seconds is well inside
 // the time it takes to make a coffee, and each poll is a read the limiter answers without a D1
@@ -63,6 +64,8 @@ export default function OrderStatus() {
   const location = useLocation();
   const [order, setOrder] = useState(null);
   const [error, setError] = useState("");
+  // The order carries the café's name, so this page titles its tab without fetching the café config.
+  useCafeTitle(order && order.cafeName ? { cafe: { name: order.cafeName } } : null, order ? `Order #${order.id}` : "");
 
   // The token travels in the fragment, so it never reaches a server log. It is what proves this browser
   // placed the order: the id alone is not a credential, and without one this page asks for staff help

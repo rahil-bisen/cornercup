@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, cafePath } from "../lib/api.js";
-import { cafeName, isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../lib/config.js";
 import { gatewayEnabled } from "../lib/payments.js";
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import SiteFooter from "../components/SiteFooter.jsx";
@@ -15,6 +15,7 @@ export default function Landing() {
   const [tablesAttempt, setTablesAttempt] = useState(0);
   const { config, error: configError, retry: retryConfig } = useSiteConfigState();
   const cafe = cafeName(config);
+  useCafeTitle(config, "", isCafeNotFound(configError));
   // Counter-service cafés have no tables to scan, so the page sells pickup instead of table service.
   const counterService = Boolean(config && config.service && config.service.mode === "counter");
   // Only promise UPI/cards/wallets when this café can actually take an online payment.

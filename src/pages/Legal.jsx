@@ -1,7 +1,7 @@
 import { Link, Navigate, useParams } from "react-router-dom";
 import SiteFooter from "../components/SiteFooter.jsx";
 import { cafePath } from "../lib/api.js";
-import { isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import { isCafeNotFound, useCafeTitle, useSiteConfigState } from "../lib/config.js";
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { gatewayEnabled } from "../lib/payments.js";
 
@@ -226,6 +226,7 @@ export default function Legal({ page: fixedPage }) {
   const { config, error } = useSiteConfigState();
   const details = businessDetails(config);
   const pages = pagesFor(details, gatewayEnabled(config));
+  useCafeTitle(config, pages[page] ? pages[page].title : "", isCafeNotFound(error));
   if (!pages[page]) return <Navigate to={cafePath("")} replace />;
   const content = pages[page];
 

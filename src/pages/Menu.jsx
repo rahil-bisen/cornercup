@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, cafePath, cafeSlug } from "../lib/api.js";
-import { cafeName, isCafeNotFound, useSiteConfigState } from "../lib/config.js";
+import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../lib/config.js";
 import CafeNotFound from "../components/CafeNotFound.jsx";
 import { isCurrentScope, menuScope } from "../lib/menuScope.js";
 import { resolveItemImage } from "../lib/menuImages.js";
@@ -26,6 +26,7 @@ export default function Menu() {
   const cafeKey = cafeSlug() || "cafe";
   const { config, error: configError, retry: retryConfig } = useSiteConfigState();
   const cafe = cafeName(config);
+  useCafeTitle(config, "Menu", isCafeNotFound(configError));
   // Set by the café (SERVICE_MODE=counter): no table to scan, the guest gets a pickup number instead.
   const counterService = Boolean(config && config.service && config.service.mode === "counter");
   // Tables are remembered per café: two outlets sharing a browser must never borrow each other's table.
