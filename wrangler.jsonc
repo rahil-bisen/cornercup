@@ -35,16 +35,62 @@
   "observability": {
     "enabled": true
   },
-  // Declaring secrets makes Wrangler load ONLY these keys from .dev.vars / process.env, so every
-  // secret the Worker reads has to be listed here or it silently disappears from `env`.
+  // `wrangler deploy` turns every name listed here into an "inherit" binding, and Cloudflare rejects
+  // the whole upload if any of them is not set on the deployed Worker. So this list holds only the
+  // secrets a Cloudflare deployment cannot run without. Optional secrets (two-factor, WorkOS,
+  // Razorpay, Telegram, ...) still reach the deployed Worker whenever they are set with
+  // `wrangler secret put`; they are just not demanded.
   "secrets": {
-    "required": [
-      "ADMIN_SECRET",
-      "OPERATOR_PASSWORD",
-      "OWNER_PASSWORD",
-      "MFA_ENC_KEY",
-      "RAZORPAY_KEY_ID",
-      "RAZORPAY_KEY_SECRET"
-    ]
+    "required": ["ADMIN_SECRET", "OPERATOR_PASSWORD"]
+  },
+  "env": {
+    // `npm run dev` and `npm start` (Render) run `wrangler dev --env selfhost`. Declaring secrets makes
+    // `wrangler dev` load ONLY the listed keys from .dev.vars / process.env, so this list names every
+    // key the Worker reads from `env`, optional ones included. In `wrangler dev` a missing key is only
+    // a warning. Bindings are not inherited by a named environment, so they are repeated here.
+    "selfhost": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "corner-cup",
+          "database_id": "eefda06c-f8d6-483d-85f2-a6a21b1827d8"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "IMAGES",
+          "bucket_name": "corner-cup-images"
+        }
+      ],
+      "secrets": {
+        "required": [
+          "ADMIN_SECRET",
+          "OPERATOR_PASSWORD",
+          "OWNER_PASSWORD",
+          "MFA_ENC_KEY",
+          "MFA_ENC_KEY_PREVIOUS",
+          "ORDER_TRACK_SECRET",
+          "RAZORPAY_KEY_ID",
+          "RAZORPAY_KEY_SECRET",
+          "RAZORPAY_WEBHOOK_SECRET",
+          "WORKOS_API_BASE",
+          "WORKOS_API_KEY",
+          "WORKOS_AUDIENCE",
+          "WORKOS_CLIENT_ID",
+          "WORKOS_ISSUER",
+          "WORKOS_REDIRECT_URI",
+          "WORKOS_STATE_ENCRYPTION_KEY",
+          "TELEGRAM_BOT_TOKEN",
+          "TELEGRAM_OWNER_CHAT_ID",
+          "CAFE_NAME",
+          "CAFE_SLUG",
+          "CAFE_TZ_OFFSET_MIN",
+          "SERVICE_MODE",
+          "SEED_DEMO_DATA",
+          "API_READ_MAX",
+          "RATE_LIMIT_CLEANUP_PROBABILITY"
+        ]
+      }
+    }
   }
 }

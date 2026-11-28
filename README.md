@@ -252,15 +252,19 @@ database path.
 The app is a Worker plus static assets, so it deploys to Cloudflare:
 
 ```bash
-npm run build
-npx wrangler deploy
+npm run deploy
 ```
+
+`npm run deploy` builds and runs `wrangler deploy --env=`, which targets the top-level configuration (the
+live `corner-cup` Worker). The `selfhost` environment in `wrangler.jsonc` is only for `wrangler dev`.
 
 `wrangler.jsonc` binds the existing `corner-cup` D1 database (`eefda06c-f8d6-483d-85f2-a6a21b1827d8`)
 as `DB` and the existing `corner-cup-images` R2 bucket as `IMAGES`. The initial deployment uses
 `workers.dev`; no custom-domain routes are configured.
 
-Before deployment, configure `ADMIN_SECRET` and `OPERATOR_PASSWORD` as Worker secrets. Production starts with
+Before deployment, configure `ADMIN_SECRET` and `OPERATOR_PASSWORD` as Worker secrets. They are the only
+secrets `wrangler.jsonc` marks as required for a deploy: Wrangler refuses to deploy while a listed secret is
+missing, so optional ones are deliberately not listed and are picked up whenever they are set. Production starts with
 an empty café directory; use the authenticated `/operator` flow to create the real café and its owner password,
 then enter the actual menu and table data from the owner board. Do not configure `SEED_DEMO_DATA` in production.
 Configure `MFA_ENC_KEY` to enable
@@ -271,7 +275,9 @@ owner two-factor authentication. If enabling WorkOS-managed owner authentication
 
 ### Hosting on Render (`npm start`)
 
-`npm start` runs `wrangler dev`, which does **not** read ordinary process environment variables by default.
+`npm start` runs `wrangler dev --env selfhost`, which does **not** read ordinary process environment variables by default.
+It loads only the keys listed under `env.selfhost.secrets.required` in `wrangler.jsonc`, so a new key the
+Worker reads must be added there too.
 With no `.dev.vars` file it only looks at `.env` files, so variables entered in Render's dashboard are invisible
 to the Worker and checkout answers `503 Ordering isn't configured` (no `ORDER_TRACK_SECRET`/`ADMIN_SECRET`).
 
