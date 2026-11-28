@@ -1,7 +1,9 @@
 // Component tests for the café landing page: mounts the real Landing page with React and jsdom and lets
 // it call the real api() layer against a stubbed fetch.
 //
-// It checks two guest-facing promises:
+// It checks these guest-facing promises:
+//   - a table café asks the guest to scan the QR code on their table (with a "Can't scan? Ask staff"
+//     note) and never lists the tables to pick from; a counter café goes straight to the menu;
 //   - online payment (UPI, cards, wallets) is only mentioned when the café has a live gateway;
 //   - before the café config arrives the page shows a neutral loading state (never a generic "Café" /
 //     "Dine-in" guess), and a failed config load offers a working "Try again".
@@ -96,7 +98,13 @@ async function mount(slug, handler) {
       React.createElement(
         BrowserRouter,
         null,
-        React.createElement(Routes, null, React.createElement(Route, { path: "/c/:slug", element: React.createElement(Landing) }))
+        React.createElement(
+          Routes,
+          null,
+          React.createElement(Route, { path: "/c/:slug", element: React.createElement(Landing) }),
+          React.createElement(Route, { path: "/c/:slug/menu", element: React.createElement("p", null, "MENU-PAGE") }),
+          React.createElement(Route, { path: "/c/:slug/t/:table", element: React.createElement("p", null, "TABLE-MENU") })
+        )
       )
     );
   });
@@ -127,31 +135,68 @@ async function mount(slug, handler) {
 const tables = () => ok({ tables: [{ id: 1, label: "T1", seats: 2 }] });
 const ONLINE_WORDS = /UPI|card|wallet/i;
 
-for (const mode of ["tables", "counter"]) {
-  test(`${mode} café without a gateway never mentions online payment`, async () => {
-    const slug = `nogw-${mode}`;
-    const page = await mount(slug, (rest) => (rest.startsWith("config") ? ok(configFor(slug, { mode })) : tables()));
-    try {
-      assert.match(page.text(), new RegExp(`CAFE-${slug}`));
-      assert.doesNotMatch(page.text(), ONLINE_WORDS);
-      assert.match(page.text(), /pay at the counter/i);
-    } finally {
-      await page.unmount();
-    }
-  });
+test("a table café asks the guest to scan their table's QR code instead of listing tables", async () => {
+  const slug = "scan-me";
+  const page = await mount(slug, (rest) => (rest.startsWith("config") ? ok(configFor(slug)) : tables()));
+  try {
+    assert.match(page.text(), /CAFE-scan-me/);
+    assert.match(page.text(), /Scan the QR code on your table/);
+    assert.match(page.text(), /Can.t scan\? Ask a staff member/);
+    assert.doesNotMatch(page.text(), /Which table|T1|2 seats/, "no table list to pick from");
+    assert.equal(page.calls.some((u) => u.endsWith("/tables")), false, "the table list is never fetched");
+    assert.equal(page.container.querySelectorAll('a[href*="/t/"]').length, 0, "no table links");
+  } finally {
+    await page.unmount();
+  }
+});
 
-  test(`${mode} café with a live gateway mentions online payment`, async () => {
-    const slug = `gw-${mode}`;
-    const page = await mount(slug, (rest) =>
-      rest.startsWith("config") ? ok(configFor(slug, { mode, gateway: true })) : tables()
-    );
-    try {
-      assert.match(page.text(), /UPI, card/);
-    } finally {
-      await page.unmount();
-    }
-  });
-}
+test("a guest who already scanned a table in this tab can go back to it", async () => {
+  const slug = "came-back";
+  window.sessionStorage.setItem(`cafe_table:${slug}`, "4");
+  const page = await mount(slug, (rest) => (rest.startsWith("config") ? ok(configFor(slug)) : tables()));
+  try {
+    const back = [...page.container.querySelectorAll("a")].find((a) => /Table 4/.test(a.textContent));
+    assert.ok(back, "a link back to their table");
+    assert.equal(back.getAttribute("href"), `/c/${slug}/t/4`);
+  } finally {
+    window.sessionStorage.removeItem(`cafe_table:${slug}`);
+    await page.unmount();
+  }
+});
+
+test("a counter café goes straight to the menu", async () => {
+  const slug = "counter-straight";
+  const page = await mount(slug, (rest) => (rest.startsWith("config") ? ok(configFor(slug, { mode: "counter" })) : tables()));
+  try {
+    assert.equal(window.location.pathname, `/c/${slug}/menu`);
+    assert.match(page.text(), /MENU-PAGE/);
+    assert.doesNotMatch(page.text(), /Scan the QR code on your table/);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a table café without a gateway never mentions online payment", async () => {
+  const slug = "nogw-tables";
+  const page = await mount(slug, (rest) => (rest.startsWith("config") ? ok(configFor(slug)) : tables()));
+  try {
+    assert.match(page.text(), /CAFE-nogw-tables/);
+    assert.doesNotMatch(page.text(), ONLINE_WORDS);
+    assert.match(page.text(), /pay at the counter/i);
+  } finally {
+    await page.unmount();
+  }
+});
+
+test("a table café with a live gateway mentions online payment", async () => {
+  const slug = "gw-tables";
+  const page = await mount(slug, (rest) => (rest.startsWith("config") ? ok(configFor(slug, { gateway: true })) : tables()));
+  try {
+    assert.match(page.text(), /UPI, card/);
+  } finally {
+    await page.unmount();
+  }
+});
 
 test("before the config arrives the page shows loading, not a generic café", async () => {
   const slug = "slow-config";
@@ -162,7 +207,7 @@ test("before the config arrives the page shows loading, not a generic café", as
   const page = await mount(slug, async (rest) => {
     if (rest.startsWith("config")) {
       await held;
-      return ok(configFor(slug, { mode: "counter" }));
+      return ok(configFor(slug));
     }
     return tables();
   });
@@ -174,8 +219,7 @@ test("before the config arrives the page shows loading, not a generic café", as
     release();
     await page.flush();
     assert.match(page.text(), /CAFE-slow-config/);
-    assert.match(page.text(), /Pickup/);
-    assert.doesNotMatch(page.text(), /Dine-in/);
+    assert.match(page.text(), /Dine-in/);
   } finally {
     await page.unmount();
   }
@@ -218,13 +262,12 @@ test("a failed config load shows the error and Try again recovers", async () => 
 
     const retry = [...page.container.querySelectorAll("button")].find((b) => /Try again/.test(b.textContent));
     assert.ok(retry, "a Try again button is offered");
-    const tableCallsBefore = page.calls.filter((u) => u.endsWith("/tables")).length;
     await page.click(retry);
 
     assert.equal(configCalls, 2);
     assert.match(page.text(), /CAFE-flaky-config/);
     assert.match(page.text(), /Dine-in/);
-    assert.ok(page.calls.filter((u) => u.endsWith("/tables")).length > tableCallsBefore, "tables are refetched too");
+    assert.match(page.text(), /Scan the QR code on your table/);
   } finally {
     await page.unmount();
   }
