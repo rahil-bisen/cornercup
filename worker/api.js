@@ -1063,7 +1063,7 @@ function getConfig(env, cafe) {
       email: settings.contactEmail,
       address: settings.contactAddress,
     },
-    service: { mode: settings.serviceMode },
+    service: { mode: settings.serviceMode, typicalWaitMin: settings.typicalWaitMin },
     // Whether this deployment can accept an order at all. Checkout fails closed with a 503 while no
     // tracking key is configured, so the menu says so up front instead of after the guest fills a cart.
     // A boolean only: it never reveals which secret is missing.
@@ -1156,15 +1156,17 @@ async function orderPayload(env, cafe, orderId) {
   if (!order) return null;
 
   const { results: items } = await env.DB.prepare(
-    "SELECT name, emoji, price_cents, qty FROM order_items WHERE order_id = ? ORDER BY id ASC"
+    "SELECT name, emoji, price_cents, qty, note FROM order_items WHERE order_id = ? ORDER BY id ASC"
   )
     .bind(orderId)
     .all();
 
   return {
     id: order.id,
-    // The café's public name, so the tracking page can title its tab without a second request.
+    // The café's public name, so the tracking page can title its tab without a second request, and
+    // the owner's usual wait in minutes (0 = not stated) so it can show an estimate.
     cafeName: cafe.name,
+    typicalWaitMin: cafeSettings(cafe).typicalWaitMin,
     tableId: order.table_number == null ? null : order.table_number,
     tableLabel: order.table_label,
     queueNo: order.queue_no == null ? null : order.queue_no,
@@ -1178,6 +1180,7 @@ async function orderPayload(env, cafe, orderId) {
       emoji: item.emoji,
       priceCents: item.price_cents,
       qty: item.qty,
+      note: item.note || "",
     })),
   };
 }
@@ -1280,6 +1283,7 @@ async function createOrder(request, env, cafe) {
     note: normalized.note,
     paymentMethod: normalized.paymentMethod,
     wanted: normalized.wanted,
+    notes: normalized.notes,
   });
 
   const existing = await claimReadStatement(env, { cafeId: cafe.id, key: idempotencyKey }).first();
@@ -1434,6 +1438,7 @@ async function createOrder(request, env, cafe) {
         emoji: row.emoji,
         priceCents: row.price_cents,
         qty: normalized.wanted.get(row.id),
+        note: normalized.notes.get(row.id) || "",
       })),
     });
 
@@ -1514,6 +1519,7 @@ async function abandonCheckout(request, env, cafe, rawKey) {
     note: normalized.note,
     paymentMethod: normalized.paymentMethod,
     wanted: normalized.wanted,
+    notes: normalized.notes,
   });
   const now = new Date().toISOString();
 
@@ -1612,7 +1618,7 @@ async function getOrder(request, env, cafe, id) {
   if (!order) return json({ error: "We couldn't find that order." }, 404);
 
   const { results: items } = await env.DB.prepare(
-    "SELECT name, emoji, price_cents, qty FROM order_items WHERE order_id = ? ORDER BY id ASC"
+    "SELECT name, emoji, price_cents, qty, note FROM order_items WHERE order_id = ? ORDER BY id ASC"
   )
     .bind(id)
     .all();
@@ -1620,6 +1626,9 @@ async function getOrder(request, env, cafe, id) {
   return json({
     order: {
       id: order.id,
+      // As in orderPayload: the public café name for the tab title, and the owner's usual wait.
+      cafeName: cafe.name,
+      typicalWaitMin: cafeSettings(cafe).typicalWaitMin,
       tableId: order.table_number == null ? null : order.table_number,
       tableLabel: order.table_label,
       queueNo: order.queue_no == null ? null : order.queue_no,
@@ -1635,6 +1644,7 @@ async function getOrder(request, env, cafe, id) {
         emoji: item.emoji,
         priceCents: item.price_cents,
         qty: item.qty,
+        note: item.note || "",
       })),
     },
   });
@@ -3350,7 +3360,7 @@ async function adminOrders(env, cafe) {
     .all();
 
   const { results: items } = await env.DB.prepare(
-    "SELECT oi.order_id, oi.name, oi.emoji, oi.price_cents, oi.qty FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.cafe_id = ? AND (o.created_at >= ? OR o.status IN ('new', 'preparing', 'ready')) ORDER BY oi.id ASC"
+    "SELECT oi.order_id, oi.name, oi.emoji, oi.price_cents, oi.qty, oi.note FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.cafe_id = ? AND (o.created_at >= ? OR o.status IN ('new', 'preparing', 'ready')) ORDER BY oi.id ASC"
   )
     .bind(cafe.id, cutoff)
     .all();
@@ -3363,6 +3373,7 @@ async function adminOrders(env, cafe) {
       emoji: item.emoji,
       priceCents: item.price_cents,
       qty: item.qty,
+      note: item.note || "",
     });
   }
 
@@ -3637,6 +3648,14 @@ async function adminSaveSettings(request, env, cafe) {
       return json({ error: "That email address doesn't look right." }, 400);
     }
     patch.contact_email = email;
+  }
+
+  if (body.typicalWaitMin !== undefined) {
+    const wait = body.typicalWaitMin === null || body.typicalWaitMin === "" ? 0 : Number(body.typicalWaitMin);
+    if (!Number.isInteger(wait) || wait < 0 || wait > 120) {
+      return json({ error: "The usual wait should be a whole number of minutes, 0 to 120." }, 400);
+    }
+    patch.typical_wait_min = wait;
   }
 
   if (body.contactAddress !== undefined) {

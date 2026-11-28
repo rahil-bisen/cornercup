@@ -243,9 +243,11 @@ test("Stage 3B: menu photography columns are nullable, additive and re-runnable"
   assert.equal(legacyRow.image_key, null, "an existing item keeps no photograph until one is uploaded");
   assert.equal(legacyRow.image_updated_at, null);
 
+  // The only column any migration adds to order_items is the later per-dish `note`; the photography
+  // migration itself never touches the table.
   assert.deepEqual(
     columns(legacy, "order_items"),
-    orderItemColumnsBefore,
+    [...orderItemColumnsBefore, "note"],
     "order_items is not touched by the photography migration"
   );
 

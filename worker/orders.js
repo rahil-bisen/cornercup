@@ -9,6 +9,9 @@ export const CLAIM_LEASE_MS = 30_000;
 
 // Mirrors createOrder's rules so both handlers derive the same fingerprint from the same body.
 // Checks that need the database (menu ownership, sold out, table ownership) stay in api.js.
+// The longest note a guest may attach to one dish.
+export const ITEM_NOTE_MAX = 120;
+
 export function normalizeCheckoutBody(body, { counter }) {
   const rawItems = Array.isArray(body.items) ? body.items : [];
   if (rawItems.length === 0) return { error: "empty" };
@@ -17,15 +20,22 @@ export function normalizeCheckoutBody(body, { counter }) {
   if (paymentMethod !== "counter" && paymentMethod !== "razorpay") return { error: "payment_method" };
 
   const wanted = new Map();
+  // A guest's note for one dish ("less sugar"), kept per item id. Two lines for the same item keep both
+  // notes, in the order sent, so the kitchen never loses one.
+  const notes = new Map();
   for (const item of rawItems) {
     const itemId = Number(item && item.itemId);
     const qty = Math.floor(Number(item && item.qty));
     if (!Number.isFinite(itemId) || !Number.isFinite(qty) || qty < 1) return { error: "item" };
+    if (item.note !== undefined && item.note !== null && typeof item.note !== "string") return { error: "item" };
     wanted.set(itemId, Math.min(20, qty + (wanted.get(itemId) || 0)));
+    const note = String(item.note || "").replace(/\s+/g, " ").trim().slice(0, ITEM_NOTE_MAX);
+    if (note) notes.set(itemId, notes.has(itemId) ? `${notes.get(itemId)}; ${note}`.slice(0, ITEM_NOTE_MAX) : note);
   }
 
   return {
     wanted,
+    notes,
     note: String(body.note || "").trim().slice(0, 300),
     paymentMethod,
     tableId: counter ? null : Number(body.tableId),
@@ -42,9 +52,11 @@ async function digestHex(message) {
 // means the same string means the same hash, whatever order the browser listed the lines in.
 // Prices are deliberately absent: they belong to the server and a price change must not turn a
 // retry into a different checkout.
-export async function orderFingerprint({ cafeId, counter, tableId, note, paymentMethod, wanted }) {
+// A per-item note is part of the checkout, so it is part of the fingerprint, but only when there is
+// one: a cart without item notes hashes exactly as it did before notes existed.
+export async function orderFingerprint({ cafeId, counter, tableId, note, paymentMethod, wanted, notes = new Map() }) {
   const items = [...wanted.entries()]
-    .map(([itemId, qty]) => ({ itemId, qty }))
+    .map(([itemId, qty]) => (notes.get(itemId) ? { itemId, qty, note: notes.get(itemId) } : { itemId, qty }))
     .sort((a, b) => a.itemId - b.itemId);
 
   return digestHex(
@@ -166,8 +178,8 @@ export function orderInsertStatement(env, p) {
 // to somebody else's ticket.
 export function itemInsertStatement(env, p, fail = false) {
   return env.DB.prepare(
-    "INSERT INTO order_items (order_id, menu_item_id, name, emoji, price_cents, qty) " +
-      "SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (" +
+    "INSERT INTO order_items (order_id, menu_item_id, name, emoji, price_cents, qty, note) " +
+      "SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (" +
       "SELECT 1 FROM orders WHERE id = ? AND cafe_id = ? AND idempotency_key = ? AND fingerprint = ?)"
   ).bind(
     p.orderId,
@@ -176,6 +188,7 @@ export function itemInsertStatement(env, p, fail = false) {
     p.emoji,
     p.priceCents,
     p.qty,
+    p.note || "",
     p.orderId,
     p.cafeId,
     p.key,

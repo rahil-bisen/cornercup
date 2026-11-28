@@ -532,6 +532,7 @@ test("F-07 phase 1: no serializer emits an identity, membership or mode field", 
     "contactEmail",
     "contactPhone",
     "serviceMode",
+    "typicalWaitMin",
     "tzOffsetMin",
   ]);
 

@@ -768,7 +768,10 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
                       {order.items.map((item, index) => (
                         <li key={`${order.id}-${index}`}>
                           <span className="qty">{item.qty}×</span>
-                          <span>{item.name}</span>
+                          <span>
+                            {item.name}
+                            {item.note && <span className="order-item-note">“{item.note}”</span>}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -926,6 +929,7 @@ function SettingsTab({ call, onSaved }) {
           contactPhone: form.contactPhone,
           contactEmail: form.contactEmail,
           contactAddress: form.contactAddress,
+          typicalWaitMin: form.typicalWaitMin === "" ? 0 : Number(form.typicalWaitMin),
           // The current password is required by the server whenever a new one is sent, so a session
           // alone cannot change the credential.
           ...(form.password
@@ -1018,6 +1022,23 @@ function SettingsTab({ call, onSaved }) {
             onChange={(event) => update("contactAddress", event.target.value)}
             placeholder="12 Residency Road, Bengaluru 560025"
           />
+        </label>
+
+        <label className="field">
+          <span>Usual wait for an order (minutes)</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="0"
+            max="120"
+            step="1"
+            value={form.typicalWaitMin ?? 0}
+            onChange={(event) => update("typicalWaitMin", event.target.value)}
+            aria-describedby="typical-wait-help"
+          />
+          <small id="typical-wait-help" className="muted small">
+            Guests see &ldquo;usually ready in about this long&rdquo; while they wait. Leave at 0 to show no estimate.
+          </small>
         </label>
 
         <label className="field">

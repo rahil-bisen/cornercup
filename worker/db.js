@@ -213,6 +213,11 @@ export const MIGRATIONS = [
   // Veg / non-veg / egg, set by the owner per item: 'veg', 'nonveg', 'egg', or NULL for "not stated".
   // Nullable with no default, so every existing item stays unmarked until the owner chooses.
   "ALTER TABLE menu_items ADD COLUMN diet TEXT",
+  // A guest's note for one dish ("less sugar", "no onion"). Empty for every existing line.
+  "ALTER TABLE order_items ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+  // The owner's "orders are usually ready in about N minutes", shown to guests while they wait. 0 is
+  // "not stated", which every existing café starts as.
+  "ALTER TABLE cafes ADD COLUMN typical_wait_min INTEGER NOT NULL DEFAULT 0",
 
   // Stage 17B. A second factor for the local owner password. One row per café; the secret is stored
   // only as AES-256-GCM ciphertext (`secret_enc`), and `confirmed_at` is what makes the factor

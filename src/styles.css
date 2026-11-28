@@ -3036,3 +3036,112 @@ img {
   line-height: 1;
   cursor: pointer;
 }
+
+/* ============================================ cart: summary line and per-dish notes */
+
+.sheet-summary {
+  margin: 0 0 4px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.sheet-line {
+  align-items: flex-start;
+}
+
+.sheet-line .stepper,
+.sheet-line .sheet-line-price {
+  margin-top: 2px;
+}
+
+.sheet-add-note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  font-size: 0.88rem;
+  color: var(--accent-dark);
+}
+
+.sheet-item-note {
+  display: block;
+  margin-top: 6px;
+}
+
+.sheet-item-note input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.sheet-item-note input:focus {
+  outline: 3px solid rgba(180, 80, 44, 0.25);
+  border-color: var(--accent);
+}
+
+/* ============================================ order confirmation: the number to show staff */
+
+.order-ticket {
+  margin: 14px 0 6px;
+  padding: 18px 16px;
+  border-radius: 20px;
+  border: 2px dashed var(--line);
+  background: var(--white);
+  text-align: center;
+  display: grid;
+  gap: 4px;
+}
+
+.order-ticket .eyebrow {
+  margin: 0;
+}
+
+.order-ticket-number {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(2.6rem, 14vw, 3.4rem);
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.order-ticket p.muted {
+  margin: 4px 0 0;
+}
+
+.wait-estimate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--sage-soft);
+  color: #24452f;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.receipt-item-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.order-item-note {
+  display: block;
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--accent-dark);
+}

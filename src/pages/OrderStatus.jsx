@@ -13,10 +13,10 @@ const ORDER_POLL_MS = 15 * 1000;
 // Pickup orders are collected, table orders are delivered, so the wording follows the order kind.
 function stepsFor(pickup) {
   return [
-    { key: "new", title: "Order received", detail: "The kitchen has your ticket." },
+    { key: "new", title: "Received", detail: "The kitchen has your ticket." },
     {
       key: "preparing",
-      title: "Being made",
+      title: "Preparing",
       detail: pickup ? "We'll call your pickup number when it's ready." : "Your food and drinks are on the way.",
     },
     { key: "ready", title: "Ready", detail: pickup ? "Collect it at the counter." : "Coming to your table now." },
@@ -38,10 +38,21 @@ function menuPath(order) {
 // wording follows the collection style too — a pickup order is collected, a table order is served.
 function headingFor(order, pickup) {
   if (order.status === "cancelled") return "Order cancelled";
-  if (order.status === "preparing") return "Being made";
+  if (order.status === "preparing") return "Being prepared";
   if (order.status === "ready") return pickup ? "Ready to collect" : "Your order is ready";
   if (order.status === "served") return pickup ? "Collected" : "Served";
-  return "Order confirmed";
+  return "Thanks — your order is in!";
+}
+
+// "Usually ready in about 15 min (around 7:45 PM)": only while the order is still on its way, and only
+// when the café has said how long orders usually take. Nothing is estimated from guesswork.
+function waitEstimate(order) {
+  const minutes = Number(order.typicalWaitMin);
+  if (!Number.isInteger(minutes) || minutes <= 0) return null;
+  if (order.status !== "new" && order.status !== "preparing") return null;
+  const placed = Date.parse(order.createdAt);
+  const around = Number.isFinite(placed) ? clockTime(new Date(placed + minutes * 60 * 1000).toISOString()) : "";
+  return `Usually ready in about ${minutes} min${around ? ` (around ${around})` : ""}`;
 }
 
 // Staff pressing "Payment received" stores payment_status 'counter' together with paid_at. A guest who
@@ -194,15 +205,27 @@ export default function OrderStatus() {
   return (
     <main className="page-narrow status-page">
       <header className="receipt-head">
-        {/* The queue number (or the table) is the one thing a guest reads across a room, so it is the
-            largest text on the page — not a 10px eyebrow above a generic heading. */}
-        <p className="eyebrow">{pickup ? "Pickup number" : "Table"}</p>
-        <p className="queue-number">{pickup ? order.queueNo : order.tableLabel}</p>
         <h1>{heading}</h1>
         <p className="muted">
-          Order <strong>#{order.id}</strong> · placed {clockTime(order.createdAt)}
+          {pickup ? "Pickup" : order.tableLabel} · placed {clockTime(order.createdAt)}
         </p>
       </header>
+
+      {/* The number a guest holds up for staff, or reads when it is called, is the largest thing on the
+          page. A pickup order is called by its queue number; a table order is found by its code. */}
+      <section className="order-ticket" aria-label="Your order number">
+        <p className="eyebrow">{pickup ? "Your pickup number" : "Your order number"}</p>
+        <p className="order-ticket-number">{pickup && order.queueNo != null ? order.queueNo : `#${order.id}`}</p>
+        <p className="muted small">
+          {pickup && order.queueNo != null ? (
+            <>
+              Order #{order.id} · we&apos;ll call this number when it&apos;s ready
+            </>
+          ) : (
+            "Show this to staff if you need help with your order"
+          )}
+        </p>
+      </section>
 
       {cancelled ? (
         <div className="state-card compact">
@@ -222,11 +245,17 @@ export default function OrderStatus() {
             </p>
           )}
 
-          <ol className="timeline">
+          {waitEstimate(order) && (
+            <p className="wait-estimate">
+              <span aria-hidden="true">⏱</span> {waitEstimate(order)}
+            </p>
+          )}
+
+          <ol className="timeline" aria-label="Order progress">
             {steps.map((step, index) => {
               const state = index < currentIndex ? "done" : index === currentIndex ? "active" : "todo";
               return (
-                <li key={step.key} className={`timeline-step ${state}`}>
+                <li key={step.key} className={`timeline-step ${state}`} aria-current={state === "active" ? "step" : undefined}>
                   <span className="timeline-dot" aria-hidden="true">
                     {state === "done" ? "✓" : index + 1}
                   </span>
@@ -246,11 +275,9 @@ export default function OrderStatus() {
         <ul className="receipt-lines">
           {order.items.map((item, index) => (
             <li key={`${item.name}-${index}`}>
-              <span className="receipt-emoji" aria-hidden="true">
-                {item.emoji}
-              </span>
               <span className="receipt-name">
                 {item.qty}× {item.name}
+                {item.note && <span className="receipt-item-note">“{item.note}”</span>}
               </span>
               <span>{money(item.priceCents * item.qty)}</span>
             </li>
@@ -258,7 +285,7 @@ export default function OrderStatus() {
         </ul>
         {order.note && (
           <p className="receipt-note">
-            <span className="muted small">Note for the kitchen</span>
+            <span className="muted small">Note for the whole order</span>
             <br />
             {order.note}
           </p>

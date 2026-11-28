@@ -90,7 +90,9 @@ export const BODY_LIMITS = {
   adminItem: 2048, // { available } or full edit: name, category, description, emoji, priceCents
   table: 1024, // label and seats
   checkout: 16384, // up to 40 lines plus a note
-  abandon: 1024, // an idempotency key and nothing else
+  // The stored checkout body is re-sent to prove which cart is being abandoned, so it gets the same
+  // ceiling as the checkout itself; a large cart (now with item notes) no longer fails to abandon.
+  abandon: 16384,
   payment: 2048, // method and reference
   paymentVerify: 4096, // gateway signature and identifiers
   webhook: 65536, // gateway event envelopes are the largest legitimate bodies

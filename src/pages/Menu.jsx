@@ -65,6 +65,15 @@ export default function Menu() {
     });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [note, setNote] = useState("");
+  // A note per dish ("less sugar"), keyed by item id. Only lines still in the cart are sent.
+  const [itemNotes, setItemNotes] = useState({});
+  const setItemNote = (itemId, value) =>
+    setItemNotes((current) => {
+      const next = { ...current };
+      if (value) next[itemId] = value;
+      else delete next[itemId];
+      return next;
+    });
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState("");
   const [resolvedOrder, setResolvedOrder] = useState(null);
@@ -320,7 +329,14 @@ export default function Menu() {
     ...(activeTable ? { tableId: Number(activeTable) } : {}),
     note,
     paymentMethod: checkoutPaymentMethod(config),
-    items: lines.map((line) => ({ itemId: line.item.id, qty: line.qty })).sort((a, b) => a.itemId - b.itemId),
+    // A line carries `note` only when the guest wrote one, so a cart without item notes sends exactly
+    // the body it always did (and a pending checkout from before notes still matches it).
+    items: lines
+      .map((line) => {
+        const itemNote = String(itemNotes[line.item.id] || "").trim();
+        return itemNote ? { itemId: line.item.id, qty: line.qty, note: itemNote } : { itemId: line.item.id, qty: line.qty };
+      })
+      .sort((a, b) => a.itemId - b.itemId),
   });
 
   // A reload rebuilds the pending body from the stored note, so an untouched cart is the same checkout.
@@ -330,6 +346,11 @@ export default function Menu() {
     try {
       const parsed = JSON.parse(pending.body);
       if (typeof parsed.note === "string") setNote(parsed.note);
+      if (Array.isArray(parsed.items)) {
+        const restored = {};
+        for (const line of parsed.items) if (line && typeof line.note === "string" && line.note) restored[line.itemId] = line.note;
+        setItemNotes(restored);
+      }
     } catch {
       /* a corrupt entry is replaced only after a conclusive reply */
     }
@@ -384,6 +405,7 @@ export default function Menu() {
       localStorage.removeItem(cartKey);
       setCart({});
       setNote("");
+      setItemNotes({});
       setSheetOpen(false);
       navigate(orderLink(payload.order, payload.trackToken, activeTable));
     } catch (err) {
@@ -719,6 +741,8 @@ export default function Menu() {
         lines={lines}
         note={note}
         onNote={setNote}
+        itemNotes={itemNotes}
+        onItemNote={setItemNote}
         onQty={setQty}
         onClose={() => setSheetOpen(false)}
         onPlace={placeOrder}

@@ -19,6 +19,9 @@ export function cafeSettings(cafe) {
     contactPhone: cafe.contact_phone || "",
     contactEmail: cafe.contact_email || "",
     contactAddress: cafe.contact_address || "",
+    // How long an order usually takes, in minutes, as the owner states it. 0 means "not stated", and
+    // the tracking page then shows no estimate rather than inventing one.
+    typicalWaitMin: Number.isInteger(Number(cafe.typical_wait_min)) ? Number(cafe.typical_wait_min) : 0,
   };
 }
 
