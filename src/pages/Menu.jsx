@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, cafePath, cafeSlug } from "../lib/api.js";
 import { cafeName, isCafeNotFound, useCafeTitle, useSiteConfigState } from "../lib/config.js";
@@ -246,6 +246,26 @@ export default function Menu() {
       if (timer) clearTimeout(timer);
     };
   }, [data, visibleCategories]);
+
+  // The rail scrolls sideways, so the highlighted category can sit off-screen ("Desserts" while the
+  // guest reads desserts). Bring it into view whenever it changes, centred, and only when it is not
+  // already fully visible, so the rail does not twitch on every small scroll.
+  const categoryRail = useRef(null);
+  useEffect(() => {
+    const rail = categoryRail.current;
+    if (!rail || !activeCategory) return;
+    const pill = [...rail.querySelectorAll("button")].find((button) => button.textContent === activeCategory);
+    if (!pill || typeof rail.scrollBy !== "function") return;
+    const railBox = rail.getBoundingClientRect();
+    const pillBox = pill.getBoundingClientRect();
+    if (pillBox.left >= railBox.left + 8 && pillBox.right <= railBox.right - 8) return;
+    const reduceMotion =
+      typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rail.scrollBy({
+      left: pillBox.left - railBox.left - (railBox.width - pillBox.width) / 2,
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, [activeCategory]);
 
   useEffect(() => {
     if (carts[cartKey] === undefined) return;
@@ -505,7 +525,7 @@ export default function Menu() {
       {data && !menuEmpty && (
         <>
           <div className="category-nav-wrap">
-            <nav className="category-nav" aria-label="Menu categories">
+            <nav className="category-nav" aria-label="Menu categories" ref={categoryRail}>
               {visibleCategories.map((category) => {
                 const current = activeCategory === category.name;
                 return (
