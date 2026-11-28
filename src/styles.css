@@ -3145,3 +3145,111 @@ img {
   font-style: italic;
   color: var(--accent-dark);
 }
+
+/* ============================================ staff screens: phones, tablets, touch */
+
+/* Form fields never push past their column on a narrow phone (the operator's "Add a café" grid used to
+   run off the right edge). */
+.field {
+  min-width: 0;
+}
+
+.field input,
+.field textarea,
+.field select {
+  width: 100%;
+  min-height: 44px;
+}
+
+.admin-tab {
+  min-height: 44px;
+}
+
+/* Phones: the header wraps instead of squeezing the café name into a column one word wide, and the
+   action buttons and tabs scroll sideways rather than overflowing the screen. */
+@media (max-width: 640px) {
+  .admin-top {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    gap: 10px;
+  }
+
+  .admin-brand {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .admin-top-actions {
+    flex: 1 1 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-top-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-top-actions .btn {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .admin-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 10px 16px 0;
+  }
+
+  .admin-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-tab {
+    flex: none;
+    white-space: nowrap;
+  }
+}
+
+/* Tablets and up: the order board is read from a step or two away, so tickets get bigger type and
+   stronger contrast. */
+@media (min-width: 700px) {
+  .order-card {
+    padding: 16px;
+    gap: 10px;
+  }
+
+  .order-table {
+    font-size: 1.45rem;
+  }
+
+  .order-id,
+  .order-meta {
+    font-size: 0.86rem;
+  }
+
+  .order-items {
+    font-size: 1.08rem;
+    gap: 4px;
+    color: var(--ink);
+  }
+
+  .order-items .qty {
+    min-width: 34px;
+    font-size: 1.08rem;
+  }
+
+  .order-note {
+    font-size: 0.95rem;
+  }
+
+  .board-col h2 {
+    font-size: 0.95rem;
+  }
+}
+
+/* The operator's café cards hold a name, an address and two actions, so they get a wider column than
+   a table chip and run full width on a phone. */
+.cafe-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+}

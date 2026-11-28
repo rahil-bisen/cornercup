@@ -292,7 +292,6 @@ function AdminLogin({ onSignIn, ownerAuth }) {
               autoComplete="current-password"
               value={pin}
               onChange={(event) => setPin(event.target.value)}
-              placeholder="••••"
               autoFocus
             />
           </label>
@@ -682,7 +681,9 @@ function OrdersTab({ call, cafe, counterOnly = false }) {
           <div className="stat">
             <span>Average bill</span>
             <strong>{money(stats.averageCents)}</strong>
-            <em>{stats.orders} orders today</em>
+            <em>
+              {stats.orders} {stats.orders === 1 ? "order" : "orders"} today
+            </em>
           </div>
         </div>
       )}
@@ -1183,7 +1184,7 @@ function MenuTab({ call, csrfToken }) {
     }
   };
   const removeImage = async (item) => {
-    if (!window.confirm("Remove the custom photo? The category default will be used.")) return;
+    if (!window.confirm("Remove this photo? Guests will see the plain placeholder until you upload another.")) return;
     setImageBusy(item.id);
     setError("");
     try {
