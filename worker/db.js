@@ -363,6 +363,14 @@ export async function ensureDb(env) {
   }
 
   await init(env);
+  // Ordering stays paused while the checkout index cannot be built (duplicate keys already stored).
+  // Recording the version in that state would skip the re-check on every later cold start, leaving
+  // ordering off until someone bumped SCHEMA_VERSION. So the marker is only written once the database is
+  // fully ready; until then each cold start runs the full setup again, exactly as before the marker.
+  if (!idempotencyIndexReady) {
+    ready = true;
+    return;
+  }
   await env.DB.prepare(
     "INSERT INTO app_schema_state (id, version, idempotency_index_ready) VALUES (1, ?, ?) " +
       "ON CONFLICT(id) DO UPDATE SET version = excluded.version, " +

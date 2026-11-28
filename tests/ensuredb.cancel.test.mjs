@@ -167,3 +167,32 @@ test("two requests creating the primary café at the same moment do not fail on 
   assert.equal(results[0].value.slug, "corner-cup");
   assert.equal(results[1].value.slug, "corner-cup");
 });
+
+test("while ordering is paused by duplicate checkout keys, no marker is stored and every cold start re-checks", async () => {
+  const db = new DatabaseSync(":memory:");
+  const DB = fakeD1(db);
+
+  // A database from before the checkout index existed, holding two orders with the same key.
+  resetEnsureDbForTests();
+  await ensureDb(env(DB));
+  db.exec("DROP INDEX IF EXISTS idx_orders_idempotency_key");
+  db.exec("DELETE FROM app_schema_state");
+  const cafeId = db.prepare("SELECT id FROM cafes LIMIT 1").get().id;
+  const insert = db.prepare(
+    "INSERT INTO orders (id, cafe_id, table_id, table_label, created_at, updated_at, idempotency_key) VALUES (?, ?, 0, 'T', 'x', 'x', 'same-key')"
+  );
+  insert.run("DUPA", cafeId);
+  insert.run("DUPB", cafeId);
+
+  resetEnsureDbForTests();
+  await ensureDb(env(DB));
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM app_schema_state").get().n, 0, "no marker while not ready");
+
+  // Once the duplicate is resolved, the next cold start builds the index and records the version.
+  db.exec("DELETE FROM orders WHERE id = 'DUPB'");
+  resetEnsureDbForTests();
+  await ensureDb(env(DB));
+  const state = db.prepare("SELECT version, idempotency_index_ready FROM app_schema_state").get();
+  assert.equal(state.version, SCHEMA_VERSION);
+  assert.equal(state.idempotency_index_ready, 1);
+});
