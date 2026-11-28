@@ -9,6 +9,8 @@ import {
   commitClaimStatement,
   counterPaymentStatement,
   normalizeCheckoutBody,
+  cafeDay,
+  isDailyNumberCollision,
   orderBatch,
   paymentStatusSets,
   orderFingerprint,
@@ -1427,7 +1429,8 @@ async function createOrder(request, env, cafe) {
       note: normalized.note,
       totalCents,
       paymentMethod: normalized.paymentMethod,
-      dayStart: cafeDayStart(settings.tzOffsetMin),
+      // The café-local business day of this order, from the same instant as its created_at.
+      ...cafeDay(Date.parse(now), settings.tzOffsetMin),
       key: idempotencyKey,
       fingerprint,
       lease,
@@ -1467,8 +1470,9 @@ async function createOrder(request, env, cafe) {
         error: err && err.message ? err.message : String(err),
       });
 
-      // Only a primary-key collision on orders.id is retryable.
-      if (isOrderIdCollision(err) && attempt < MAX_ATTEMPTS - 1) {
+      // Only a primary-key collision on orders.id, or the (never expected) daily-number collision the
+      // unique index refuses, is retryable: a fresh attempt reads the new highest number.
+      if ((isOrderIdCollision(err) || isDailyNumberCollision(err)) && attempt < MAX_ATTEMPTS - 1) {
         continue;
       }
 

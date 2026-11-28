@@ -218,6 +218,10 @@ export const MIGRATIONS = [
   // The owner's "orders are usually ready in about N minutes", shown to guests while they wait. 0 is
   // "not stated", which every existing café starts as.
   "ALTER TABLE cafes ADD COLUMN typical_wait_min INTEGER NOT NULL DEFAULT 0",
+  // The café-local date an order's daily number belongs to ("2026-11-28"). Set on every new order;
+  // NULL on every order that already exists, which keeps whatever it showed before (a counter queue
+  // number, or the random code for a dine-in order). Nothing is backfilled.
+  "ALTER TABLE orders ADD COLUMN business_date TEXT",
 
   // Stage 17B. A second factor for the local owner password. One row per café; the secret is stored
   // only as AES-256-GCM ciphertext (`secret_enc`), and `confirmed_at` is what makes the factor
@@ -246,6 +250,11 @@ export const MIGRATIONS = [
 export const POST_MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS idx_menu_cafe ON menu_items (cafe_id, sort)",
   "CREATE INDEX IF NOT EXISTS idx_orders_cafe ON orders (cafe_id, created_at)",
+  // One daily number per café per business date, enforced by the database. Partial, so only orders
+  // written with a business date are covered: existing rows are never re-checked, and an old duplicate
+  // counter number can never stop the Worker from starting.
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_daily_number ON orders (cafe_id, business_date, queue_no) " +
+    "WHERE business_date IS NOT NULL AND queue_no IS NOT NULL",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_tables_cafe_number ON tables (cafe_id, number)",
   "CREATE INDEX IF NOT EXISTS idx_rate_limits_expires ON rate_limits (expires)",
   "CREATE INDEX IF NOT EXISTS idx_operator_sessions_expires ON operator_sessions (expires)",

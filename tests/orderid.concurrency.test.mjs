@@ -130,7 +130,7 @@ test("F-14 retry: dine-in path remains correct after retry", { skip }, async () 
     assert.equal(res.status, 201);
     const { order } = await res.json();
     assert.equal(order.tableLabel, "Harness Table");
-    assert.equal(order.queueNo, null);
+    assert.equal(order.queueNo, 1, "the retried attempt took exactly one daily number");
     assert.equal(order.items.length, 1);
     assert.equal(order.items[0].qty, 2);
   } finally {

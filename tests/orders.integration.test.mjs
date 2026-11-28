@@ -42,7 +42,7 @@ try {
 
 const skip = alive ? false : `harness not reachable at ${HARNESS}`;
 
-test("T5: a dine-in order stores the internal table id, no pickup number, and replays", { skip }, async () => {
+test("T5: a dine-in order stores the internal table id, its daily number, and replays", { skip }, async () => {
   const cafe = await call("/seed", { serviceMode: "tables" });
   assert.ok(cafe.tableId, "the seed created a table");
   assert.ok(cafe.slug, "the seed created a slug");
@@ -62,7 +62,7 @@ test("T5: a dine-in order stores the internal table id, no pickup number, and re
 
     assert.equal(created.tableId, 1, "the café-facing table number comes back");
     assert.equal(created.tableLabel, "Harness Table");
-    assert.equal(created.queueNo, null, "a table order has no pickup number");
+    assert.equal(created.queueNo, 1, "a table order gets the café's daily number too");
     assert.equal(created.items.length, 1);
     assert.equal(created.items[0].qty, 2);
     assert.equal(created.totalCents, 20000, "the server price, never the client's");
@@ -70,7 +70,8 @@ test("T5: a dine-in order stores the internal table id, no pickup number, and re
     const stored = await call("/read", { cafeId: cafe.cafeId, key });
     assert.equal(stored.orders.length, 1);
     assert.equal(stored.orders[0].table_id, cafe.tableId, "internal tables.id, not 0 and not the number");
-    assert.equal(stored.orders[0].queue_no, null);
+    assert.equal(stored.orders[0].queue_no, 1);
+    assert.match(String(stored.orders[0].business_date), /^\d{4}-\d{2}-\d{2}$/, "stamped with the café-local date");
     assert.equal(stored.itemCount, 1);
     assert.equal(stored.claim.state, "committed");
 
@@ -78,7 +79,7 @@ test("T5: a dine-in order stores the internal table id, no pickup number, and re
     assert.equal(replay.status, 200);
     const { order: again } = await replay.json();
     assert.equal(again.id, created.id, "the retry is the same order");
-    assert.equal(again.queueNo, null);
+    assert.equal(again.queueNo, created.queueNo, "the retry keeps the same number");
     assert.equal(again.tableId, created.tableId);
     assert.deepEqual(again.items, created.items);
     assert.equal(stored.orders.length, 1, "the retry created no second order");

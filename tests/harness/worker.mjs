@@ -1025,7 +1025,7 @@ export default {
 
     if (url.pathname === "/read") {
       const orders = await env.DB.prepare(
-        "SELECT id, queue_no, table_id, total_cents FROM orders WHERE cafe_id = ? AND idempotency_key = ?"
+        "SELECT id, queue_no, business_date, table_id, total_cents FROM orders WHERE cafe_id = ? AND idempotency_key = ?"
       )
         .bind(body.cafeId, body.key)
         .all();
